@@ -5,6 +5,7 @@ on:
     paths:
       - 'codestra/**'
       - 'scripts/validate_codestra_alloy.py'
+      - 'scripts/validate_codestra_alloy_corporate.py'
       - '.github/workflows/validate-codestra-alloy.yml'
       - 'upstream/go.mod'
       - 'upstream/go.sum'
@@ -13,6 +14,7 @@ on:
     paths:
       - 'codestra/**'
       - 'scripts/validate_codestra_alloy.py'
+      - 'scripts/validate_codestra_alloy_corporate.py'
       - '.github/workflows/validate-codestra-alloy.yml'
       - 'upstream/go.mod'
       - 'upstream/go.sum'
@@ -41,7 +43,11 @@ jobs:
         run: python -m pip install --disable-pip-version-check --no-cache-dir PyYAML==6.0.3
 
       - name: Validate business isolation, collection, redaction, packaging, and runtime policy
-        run: python scripts/validate_codestra_alloy.py
+        env:
+          PYTHONPYCACHEPREFIX: /tmp/codestra-alloy-pycache
+        run: |
+          python -m py_compile scripts/validate_codestra_alloy.py scripts/validate_codestra_alloy_corporate.py
+          python scripts/validate_codestra_alloy_corporate.py
 
       - name: Render hardened Compose candidate
         env:

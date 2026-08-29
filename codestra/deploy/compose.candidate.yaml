@@ -11,7 +11,9 @@ services:
     image: ${CODESTRA_ALLOY_IMAGE:?set the immutable Codestra Alloy image reference including sha256 digest}
     command:
       - run
-      - --server.http.listen-addr=0.0.0.0:12345
+      # The listener is reachable only on attached private container networks;
+      # no host port is published and the native runtime has no public route.
+      - --server.http.listen-addr=:12345
       - --storage.path=/var/lib/alloy
       - /etc/alloy/config.alloy
     restart: unless-stopped

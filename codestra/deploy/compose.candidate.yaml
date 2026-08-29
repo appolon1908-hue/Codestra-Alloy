@@ -1,0 +1,121 @@
+name: codestra-alloy
+
+services:
+  alloy:
+    build:
+      context: ../..
+      dockerfile: codestra/deploy/Dockerfile
+      args:
+        GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:?set an immutable Go builder image including sha256 digest}
+        ALLOY_BASE_IMAGE: ${ALLOY_BASE_IMAGE:?set an immutable official Alloy image including sha256 digest}
+    image: ${CODESTRA_ALLOY_IMAGE:?set the immutable Codestra Alloy image reference including sha256 digest}
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy
+      - /etc/alloy/config.alloy
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    read_only: true
+    stop_grace_period: 90s
+    environment:
+      CODESTRA_BUSINESS: ${CODESTRA_BUSINESS:?required approved Codestra business ID}
+      CODESTRA_ENVIRONMENT: ${CODESTRA_ENVIRONMENT:?required}
+      CODESTRA_REGION: ${CODESTRA_REGION:?required}
+      CODESTRA_SERVER: ${CODESTRA_SERVER:?required canonical server name}
+      CODESTRA_ALLOY_DEPLOYMENT_ID: ${CODESTRA_ALLOY_DEPLOYMENT_ID:?required immutable Alloy deployment ID}
+      LOKI_PUSH_URL: ${LOKI_PUSH_URL:?required private TLS Loki write endpoint}
+      ALLOY_HEALTHCHECK_URL: http://127.0.0.1:12345/-/ready
+    secrets:
+      - loki_ca
+      - alloy_client_cert
+      - alloy_client_key
+    expose:
+      - "12345"
+    networks:
+      - codestra-business-logs
+      - codestra-observability
+    volumes:
+      - alloy-data:/var/lib/alloy
+      - type: bind
+        source: ${ALLOY_LOG_SOURCE_PATH:?required business-scoped host log root}
+        target: /var/log/codestra
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ALLOY_JOURNAL_SOURCE_PATH:?required persistent journal for platform or approved empty directory for business profile}
+        target: /run/log/journal
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ALLOY_MACHINE_ID_PATH:-/etc/machine-id}
+        target: /etc/machine-id
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD", "/alloy-healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: 25m
+        max-file: "3"
+    labels:
+      codestra.business: ${CODESTRA_BUSINESS:?required approved Codestra business ID}
+      codestra.application: observability
+      codestra.service: alloy
+      codestra.environment: ${CODESTRA_ENVIRONMENT:?required}
+      codestra.region: ${CODESTRA_REGION:?required}
+      codestra.server: ${CODESTRA_SERVER:?required canonical server name}
+      codestra.deployment: ${CODESTRA_ALLOY_DEPLOYMENT_ID:?required immutable Alloy deployment ID}
+      codestra.telemetry.collect: "true"
+      codestra.telemetry.host-socket-access: "false"
+      codestra.telemetry.privileged: "false"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1G
+          pids: 384
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+networks:
+  codestra-business-logs:
+    external: true
+    name: ${CODESTRA_BUSINESS_LOG_NETWORK:?required business-isolated log network}
+  codestra-observability:
+    external: true
+    name: ${CODESTRA_OBSERVABILITY_NETWORK:-codestra-observability}
+
+volumes:
+  alloy-data:
+
+secrets:
+  loki_ca:
+    external: true
+    name: ${ALLOY_LOKI_CA_SECRET_NAME:-alloy-loki-ca}
+  alloy_client_cert:
+    external: true
+    name: ${ALLOY_CLIENT_CERT_SECRET_NAME:-alloy-client-cert}
+  alloy_client_key:
+    external: true
+    name: ${ALLOY_CLIENT_KEY_SECRET_NAME:-alloy-client-key}

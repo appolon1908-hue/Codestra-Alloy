@@ -1,0 +1,196 @@
+logging {
+  level  = "info"
+  format = "json"
+}
+
+// Applications and containers expose logs through an explicit business-scoped
+// host directory: /var/log/codestra/<application>/<service>/*.log.
+// The deployment controller mounts only the assigned business root into this path.
+local.file_match "service_files" {
+  path_targets = [
+    {
+      __path__           = "/var/log/codestra/*/*/*.log",
+      codestra_business  = sys.env("CODESTRA_BUSINESS"),
+      application        = "unclassified",
+      service            = "unclassified",
+      environment        = sys.env("CODESTRA_ENVIRONMENT"),
+      server             = sys.env("CODESTRA_SERVER"),
+      region             = sys.env("CODESTRA_REGION"),
+      deployment         = sys.env("CODESTRA_ALLOY_DEPLOYMENT_ID"),
+      log_source         = "service-file",
+    },
+  ]
+  sync_period = "10s"
+}
+
+loki.source.file "service_files" {
+  targets       = local.file_match.service_files.targets
+  forward_to    = [loki.process.service_files.receiver]
+  max_line_size = "256KiB"
+
+  file_watch {
+    min_poll_frequency = "250ms"
+    max_poll_frequency = "1s"
+  }
+}
+
+// Container stdout/stderr may be mounted explicitly per application/service at
+// /var/log/codestra/<application>/<service>/docker/*-json.log. The global Docker
+// container directory and Docker socket are deliberately not mounted.
+local.file_match "docker_files" {
+  path_targets = [
+    {
+      __path__           = "/var/log/codestra/*/*/docker/*-json.log",
+      codestra_business  = sys.env("CODESTRA_BUSINESS"),
+      application        = "unclassified",
+      service            = "unclassified",
+      environment        = sys.env("CODESTRA_ENVIRONMENT"),
+      server             = sys.env("CODESTRA_SERVER"),
+      region             = sys.env("CODESTRA_REGION"),
+      deployment         = sys.env("CODESTRA_ALLOY_DEPLOYMENT_ID"),
+      log_source         = "container-json",
+    },
+  ]
+  sync_period = "10s"
+}
+
+loki.source.file "docker_files" {
+  targets       = local.file_match.docker_files.targets
+  forward_to    = [loki.process.docker_files.receiver]
+  max_line_size = "256KiB"
+
+  file_watch {
+    min_poll_frequency = "250ms"
+    max_poll_frequency = "1s"
+  }
+}
+
+// The mounted journal directory must be the real persistent journal only for the
+// platform/dedicated-host profile. Business instances on a shared host mount an
+// empty, owned directory so they cannot read unrelated businesses' system logs.
+loki.source.journal "system" {
+  path       = "/run/log/journal"
+  max_age    = "12h"
+  forward_to = [loki.process.redact.receiver]
+  labels = {
+    codestra_business = sys.env("CODESTRA_BUSINESS"),
+    application       = "infrastructure",
+    service           = "systemd-journal",
+    environment       = sys.env("CODESTRA_ENVIRONMENT"),
+    server            = sys.env("CODESTRA_SERVER"),
+    region            = sys.env("CODESTRA_REGION"),
+    deployment        = sys.env("CODESTRA_ALLOY_DEPLOYMENT_ID"),
+    log_source        = "journal",
+  }
+}
+
+loki.process "service_files" {
+  stage.regex {
+    source     = "filename"
+    expression = `^/var/log/codestra/(?P<application>[a-z0-9][a-z0-9._-]{0,62})/(?P<service>[a-z0-9][a-z0-9._-]{0,62})/.*$`
+  }
+
+  stage.labels {
+    values = {
+      application = "",
+      service     = "",
+    }
+  }
+
+  stage.label_drop {
+    values = ["filename"]
+  }
+
+  forward_to = [loki.process.redact.receiver]
+}
+
+loki.process "docker_files" {
+  stage.docker {}
+
+  stage.regex {
+    source     = "filename"
+    expression = `^/var/log/codestra/(?P<application>[a-z0-9][a-z0-9._-]{0,62})/(?P<service>[a-z0-9][a-z0-9._-]{0,62})/docker/.*$`
+  }
+
+  stage.labels {
+    values = {
+      application = "",
+      service     = "",
+    }
+  }
+
+  stage.label_drop {
+    values = ["filename"]
+  }
+
+  forward_to = [loki.process.redact.receiver]
+}
+
+// Redaction is defense in depth. Applications still own data minimization and
+// must never intentionally log secrets, raw customer payloads, or signing data.
+loki.process "redact" {
+  stage.drop {
+    expression          = `(?i)-----BEGIN (?:OPENSSH |RSA |EC |DSA )?PRIVATE KEY-----`
+    drop_counter_reason = "private_key_material"
+  }
+
+  stage.replace {
+    expression = `(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*`
+    replace    = "Bearer [REDACTED]"
+  }
+
+  stage.replace {
+    expression = `(?i)("(?:authorization|proxy_authorization|cookie|set-cookie|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret))"\s*:\s*")[^"]*(")`
+    replace    = "$1[REDACTED]$2"
+  }
+
+  stage.replace {
+    expression = `(?i)\b(authorization|proxy_authorization|cookie|set-cookie|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret))\s*[=:]\s*[^\s,&;]+`
+    replace    = "$1=[REDACTED]"
+  }
+
+  stage.replace {
+    expression = `(?i)("(?:tenant_id|tenant_name|organization_id|organization_name|customer_id|customer_name|account_id|user_id|user_name|email|phone|message_id|order_id|workflow_id|execution_id|request\.body|response\.body|http\.request\.body|http\.response\.body|db\.statement)"\s*:\s*")[^"]*(")`
+    replace    = "$1[REDACTED]$2"
+  }
+
+  stage.replace {
+    expression = `(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}`
+    replace    = "[REDACTED_EMAIL]"
+  }
+
+  stage.replace {
+    expression = `(?i)-----END (?:OPENSSH |RSA |EC |DSA )?PRIVATE KEY-----`
+    replace    = "[REDACTED_PRIVATE_KEY_MARKER]"
+  }
+
+  forward_to = [loki.write.codestra.receiver]
+}
+
+loki.write "codestra" {
+  endpoint {
+    url            = sys.env("LOKI_PUSH_URL")
+    tenant_id      = sys.env("CODESTRA_BUSINESS")
+    remote_timeout = "30s"
+
+    tls_config {
+      ca_file              = "/run/secrets/loki_ca"
+      cert_file            = "/run/secrets/alloy_client_cert"
+      key_file             = "/run/secrets/alloy_client_key"
+      insecure_skip_verify = false
+    }
+
+    backoff_config {
+      min_period = "500ms"
+      max_period = "5m"
+      max_retries = 10
+    }
+  }
+
+  wal {
+    enabled            = true
+    max_segment_age    = "1h"
+    min_read_frequency = "250ms"
+    max_read_frequency = "1s"
+  }
+}

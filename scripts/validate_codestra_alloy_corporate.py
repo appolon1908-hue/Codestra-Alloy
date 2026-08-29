@@ -2,9 +2,9 @@
 """Canonical exact-head validator for the Codestra Alloy corporate overlay.
 
 Alloy's `stage.labels` component stores promoted labels inside a nested `values`
-map. The original validator treated the map name itself as a promoted label.
-This entrypoint preserves every fail-closed policy check while parsing the
-actual Alloy syntax correctly.
+map. Regex policies also escape dots in structured field names such as
+`db.statement`. This entrypoint preserves every fail-closed policy check while
+parsing the actual Alloy syntax correctly.
 """
 
 from __future__ import annotations
@@ -78,8 +78,12 @@ def validate_alloy_config(module: ModuleType) -> None:
             module.fail(f"Alloy config does not assign required stream label: {label}")
 
     lowered = text.lower()
+    # Alloy regex literals escape dots in structured names. Compare against a
+    # normalized policy view so `db\.statement` proves `db.statement` coverage
+    # without weakening the required redaction catalogue.
+    normalized_policy = lowered.replace(r"\.", ".")
     for token in module.REQUIRED_REDACTION_TOKENS:
-        if token.lower() not in lowered:
+        if token.lower() not in normalized_policy:
             module.fail(f"Alloy redaction policy omits token class: {token}")
 
     # Parse only the nested values maps. This prevents `values` from being

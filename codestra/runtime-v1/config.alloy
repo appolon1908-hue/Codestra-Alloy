@@ -1,0 +1,251 @@
+logging {
+  level  = "info"
+  format = "json"
+}
+
+discovery.docker "containers" {
+  host             = sys.env("DOCKER_DISCOVERY_HOST")
+  refresh_interval = "30s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    replacement   = "$1"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "(.+)"
+    replacement   = "$1"
+    target_label  = "service"
+  }
+
+  rule {
+    action = "labeldrop"
+    regex  = "__meta_docker_.*"
+  }
+}
+
+loki.source.docker "containers" {
+  host             = sys.env("DOCKER_DISCOVERY_HOST")
+  targets          = discovery.relabel.containers.output
+  refresh_interval = "15s"
+  forward_to       = [loki.process.docker.receiver]
+}
+
+loki.source.journal "system" {
+  path       = "/var/log/journal"
+  max_age    = "24h"
+  labels     = { source = "journald", service = "systemd" }
+  forward_to = [loki.process.journal.receiver]
+}
+
+loki.process "docker" {
+  stage.json {
+    expressions = {
+      level          = "level",
+      trace_id       = "trace_id",
+      request_id     = "request_id",
+      correlation_id = "correlation_id",
+      operation      = "operation",
+      result         = "result",
+      error_code     = "error_code",
+    }
+  }
+
+  stage.replace {
+    expression = "(?i)(authorization|cookie|password|api[_-]?key|token|private[_-]?key)([\\\"'=:\\s]+)[^\\s,;]+"
+    replace    = "$1$2[REDACTED]"
+  }
+
+  stage.static_labels {
+    values = {
+      codestra_business = sys.env("CODESTRA_BUSINESS"),
+      application       = sys.env("CODESTRA_APPLICATION"),
+      environment       = sys.env("CODESTRA_ENVIRONMENT"),
+      server            = sys.env("CODESTRA_SERVER"),
+      region            = sys.env("CODESTRA_REGION"),
+      deployment        = sys.env("CODESTRA_DEPLOYMENT"),
+      collector         = "alloy",
+    }
+  }
+
+  stage.label_drop {
+    values = [
+      "tenant_id",
+      "customer_id",
+      "request_id",
+      "correlation_id",
+      "trace_id",
+      "email",
+      "phone",
+      "message_id",
+      "order_id",
+    ]
+  }
+
+  forward_to = [loki.write.codestra.receiver]
+}
+
+loki.process "journal" {
+  stage.replace {
+    expression = "(?i)(authorization|cookie|password|api[_-]?key|token|private[_-]?key)([\\\"'=:\\s]+)[^\\s,;]+"
+    replace    = "$1$2[REDACTED]"
+  }
+
+  stage.static_labels {
+    values = {
+      codestra_business = sys.env("CODESTRA_BUSINESS"),
+      application       = sys.env("CODESTRA_APPLICATION"),
+      environment       = sys.env("CODESTRA_ENVIRONMENT"),
+      server            = sys.env("CODESTRA_SERVER"),
+      region            = sys.env("CODESTRA_REGION"),
+      deployment        = sys.env("CODESTRA_DEPLOYMENT"),
+      collector         = "alloy",
+    }
+  }
+
+  forward_to = [loki.write.codestra.receiver]
+}
+
+loki.write "codestra" {
+  external_labels = { managed_by = "codestra" }
+
+  endpoint {
+    url       = sys.env("LOKI_PUSH_URL")
+    tenant_id = sys.env("LOKI_TENANT_ID")
+
+    tls_config {
+      ca_file              = "/run/secrets/observability_ca.pem"
+      cert_file            = "/run/secrets/alloy_client_cert.pem"
+      key_file             = "/run/secrets/alloy_client_key.pem"
+      insecure_skip_verify = false
+    }
+  }
+}
+
+prometheus.scrape "alloy_self" {
+  targets = [{
+    "__address__" = "127.0.0.1:12345",
+    "job"         = "alloy",
+  }]
+  scrape_interval = "30s"
+  forward_to      = [prometheus.relabel.codestra.receiver]
+}
+
+prometheus.relabel "codestra" {
+  rule {
+    target_label = "codestra_business"
+    replacement  = sys.env("CODESTRA_BUSINESS")
+  }
+  rule {
+    target_label = "application"
+    replacement  = sys.env("CODESTRA_APPLICATION")
+  }
+  rule {
+    target_label = "service"
+    replacement  = "alloy"
+  }
+  rule {
+    target_label = "environment"
+    replacement  = sys.env("CODESTRA_ENVIRONMENT")
+  }
+  rule {
+    target_label = "server"
+    replacement  = sys.env("CODESTRA_SERVER")
+  }
+  rule {
+    target_label = "region"
+    replacement  = sys.env("CODESTRA_REGION")
+  }
+  rule {
+    target_label = "deployment"
+    replacement  = sys.env("CODESTRA_DEPLOYMENT")
+  }
+
+  forward_to = [prometheus.remote_write.codestra.receiver]
+}
+
+prometheus.remote_write "codestra" {
+  external_labels = { managed_by = "codestra" }
+
+  endpoint {
+    url = sys.env("PROMETHEUS_REMOTE_WRITE_URL")
+
+    tls_config {
+      ca_file              = "/run/secrets/observability_ca.pem"
+      cert_file            = "/run/secrets/alloy_client_cert.pem"
+      key_file             = "/run/secrets/alloy_client_key.pem"
+      insecure_skip_verify = false
+    }
+
+    queue_config {
+      capacity             = 5000
+      max_shards           = 20
+      min_shards           = 1
+      max_samples_per_send = 2000
+      batch_send_deadline  = "5s"
+      min_backoff          = "30ms"
+      max_backoff          = "5s"
+    }
+  }
+}
+
+otelcol.receiver.otlp "local" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  output {
+    metrics = [otelcol.processor.memory_limiter.default.input]
+    logs    = [otelcol.processor.memory_limiter.default.input]
+    traces  = [otelcol.processor.memory_limiter.default.input]
+  }
+}
+
+otelcol.processor.memory_limiter "default" {
+  check_interval = "1s"
+  limit          = "512MiB"
+  spike_limit    = "128MiB"
+
+  output {
+    metrics = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  timeout             = "5s"
+  send_batch_size     = 1024
+  send_batch_max_size = 2048
+
+  output {
+    metrics = [otelcol.exporter.otlp.central.input]
+    logs    = [otelcol.exporter.otlp.central.input]
+    traces  = [otelcol.exporter.otlp.central.input]
+  }
+}
+
+otelcol.exporter.otlp "central" {
+  client {
+    endpoint    = sys.env("OTEL_EXPORTER_OTLP_ENDPOINT")
+    compression = "gzip"
+
+    tls {
+      ca_file  = "/run/secrets/observability_ca.pem"
+      cert_file = "/run/secrets/alloy_client_cert.pem"
+      key_file  = "/run/secrets/alloy_client_key.pem"
+      insecure  = false
+    }
+  }
+}

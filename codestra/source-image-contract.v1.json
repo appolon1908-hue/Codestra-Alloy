@@ -10,10 +10,21 @@
       "integration-tests/docker/tests/loki-azure-event-hubs/certs"
     ]
   },
+  "builder": {
+    "image": "grafana/alloy-build-image:v0.1.35",
+    "digest": "9fa2a341b53503ce42cf9900c401d689a68ea67cdec6a20f53d72e3665fb8dc6",
+    "cgoToolchainRequired": true,
+    "systemdDevelopmentFilesRequired": true
+  },
   "runtimeExecutable": {
     "buildContext": "upstream/collector",
     "outputPath": "/bin/alloy",
     "builtFromImportedTree": true,
+    "cgoEnabled": true,
+    "buildTags": [
+      "promtail_journal_enabled"
+    ],
+    "systemdJournalImplementation": "enabled",
     "inheritedBaseImageExecutableAllowed": false,
     "embeddedSourceLockPath": "/usr/share/codestra/CODESTRA_UPSTREAM_LOCK.json"
   },

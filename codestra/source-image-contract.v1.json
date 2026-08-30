@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "1.0",
+  "status": "SOURCE_BOUND_BUILD_CONTRACT_PREPARED_NOT_RELEASED",
+  "sourceAuthority": {
+    "repository": "https://github.com/grafana/alloy.git",
+    "upstreamCommit": "041d2911a30a53f2c9c0317333aedee108a56b0a",
+    "officialTreeSha": "68383917509d3a72fb70a9fe94368e036d343b46",
+    "importedTreeSha": "5f272c47f1954ee0b9bffce262d96483883f4b3b",
+    "sanitizedPaths": [
+      "integration-tests/docker/tests/loki-azure-event-hubs/certs"
+    ]
+  },
+  "builder": {
+    "image": "grafana/alloy-build-image:v0.1.35",
+    "digest": "9fa2a341b53503ce42cf9900c401d689a68ea67cdec6a20f53d72e3665fb8dc6",
+    "cgoToolchainRequired": true,
+    "systemdDevelopmentFilesRequired": true
+  },
+  "runtimeExecutable": {
+    "buildContext": "upstream/collector",
+    "outputPath": "/bin/alloy",
+    "builtFromImportedTree": true,
+    "cgoEnabled": true,
+    "buildTags": [
+      "promtail_journal_enabled"
+    ],
+    "systemdJournalImplementation": "enabled",
+    "inheritedBaseImageExecutableAllowed": false,
+    "embeddedSourceLockPath": "/usr/share/codestra/CODESTRA_UPSTREAM_LOCK.json"
+  },
+  "runtimeBaseImage": {
+    "role": "runtime-substrate-only",
+    "digestRequired": true,
+    "sourceAuthority": false
+  },
+  "finalImage": {
+    "repository": "ghcr.io/appolon1908-hue/codestra-alloy",
+    "digest": null,
+    "digestMustBeRecordedBeforeDeployment": true,
+    "provenanceMustReferenceImportedTree": true,
+    "sbomRequired": true,
+    "signatureRequired": true
+  },
+  "activation": {
+    "imageBuilt": false,
+    "immutableDigestRecorded": false,
+    "sourceProvenanceVerified": false,
+    "sbomAttached": false,
+    "signatureVerified": false,
+    "deploymentEnabled": false
+  }
+}

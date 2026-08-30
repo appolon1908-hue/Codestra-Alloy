@@ -1,0 +1,234 @@
+name: Validate Codestra Alloy corporate agent
+
+on:
+  pull_request:
+    paths:
+      - 'codestra/**'
+      - 'scripts/validate_codestra_alloy.py'
+      - 'scripts/validate_codestra_alloy_corporate.py'
+      - 'scripts/validate_codestra_alloy_staging_review.py'
+      - 'scripts/validate_codestra_intake_monitoring.py'
+      - '.github/workflows/validate-codestra-alloy.yml'
+      - '.github/workflows/upstream-source-sync.yml'
+      - 'CODESTRA_UPSTREAM.json'
+      - 'CODESTRA_UPSTREAM_LOCK.json'
+      - 'upstream/**'
+  push:
+    branches: [development, test, staging, production, main]
+    paths:
+      - 'codestra/**'
+      - 'scripts/validate_codestra_alloy.py'
+      - 'scripts/validate_codestra_alloy_corporate.py'
+      - 'scripts/validate_codestra_alloy_staging_review.py'
+      - 'scripts/validate_codestra_intake_monitoring.py'
+      - '.github/workflows/validate-codestra-alloy.yml'
+      - '.github/workflows/upstream-source-sync.yml'
+      - 'CODESTRA_UPSTREAM.json'
+      - 'CODESTRA_UPSTREAM_LOCK.json'
+      - 'upstream/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codestra-alloy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install pinned policy-validator dependency
+        run: python -m pip install --disable-pip-version-check --no-cache-dir PyYAML==6.0.3
+
+      - name: Validate business isolation, redaction, provenance, source binding and runtime policy
+        env:
+          PYTHONPYCACHEPREFIX: /tmp/codestra-alloy-pycache
+        run: |
+          python -m py_compile \
+            scripts/validate_codestra_alloy.py \
+            scripts/validate_codestra_alloy_corporate.py \
+            scripts/validate_codestra_alloy_staging_review.py
+          python scripts/validate_codestra_alloy_corporate.py
+          python scripts/validate_codestra_alloy_staging_review.py
+
+      - name: Reconstruct official sanitized source tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t values < <(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          lock = json.loads(Path('CODESTRA_UPSTREAM_LOCK.json').read_text())
+          print(lock['upstream_clone_url'])
+          print(lock['upstream_commit'])
+          print(lock['official_tree_sha'])
+          print(lock['imported_tree_sha'])
+          for path in lock['sanitization']['removed_paths']:
+              print(path)
+          PY
+          )
+          upstream_url="${values[0]}"
+          upstream_commit="${values[1]}"
+          official_tree="${values[2]}"
+          imported_tree="${values[3]}"
+          sanitized_paths=("${values[@]:4}")
+          test "$upstream_url" = 'https://github.com/grafana/alloy.git'
+          test "${#sanitized_paths[@]}" -eq 1
+
+          rm -rf /tmp/codestra-alloy-official
+          git init /tmp/codestra-alloy-official
+          git -C /tmp/codestra-alloy-official remote add origin "$upstream_url"
+          git -C /tmp/codestra-alloy-official fetch --depth 1 origin "$upstream_commit"
+          git -C /tmp/codestra-alloy-official checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/codestra-alloy-official rev-parse 'HEAD^{tree}')" = "$official_tree"
+
+          for path in "${sanitized_paths[@]}"; do
+            test -e "/tmp/codestra-alloy-official/$path"
+            git -C /tmp/codestra-alloy-official rm -r --cached --ignore-unmatch -- "$path"
+            rm -rf "/tmp/codestra-alloy-official/$path"
+          done
+          test "$(git -C /tmp/codestra-alloy-official write-tree)" = "$imported_tree"
+          test "$(git rev-parse HEAD:upstream)" = "$imported_tree"
+
+      - name: Render hardened Compose candidate
+        env:
+          GO_BUILDER_IMAGE_NAME: grafana/alloy-build-image:v0.1.35
+          GO_BUILDER_IMAGE_DIGEST: '9fa2a341b53503ce42cf9900c401d689a68ea67cdec6a20f53d72e3665fb8dc6'
+          ALLOY_BASE_IMAGE_NAME: grafana/alloy:99.0.0
+          ALLOY_BASE_IMAGE_DIGEST: '1111111111111111111111111111111111111111111111111111111111111111'
+          CODESTRA_ALLOY_IMAGE_NAME: ghcr.io/appolon1908-hue/codestra-alloy:ci
+          CODESTRA_ALLOY_IMAGE_DIGEST: '2222222222222222222222222222222222222222222222222222222222222222'
+          CODESTRA_BUSINESS: platform
+          CODESTRA_ENVIRONMENT: test
+          CODESTRA_REGION: ci
+          CODESTRA_SERVER: github-actions
+          CODESTRA_ALLOY_DEPLOYMENT_ID: exact-head-ci
+          LOKI_PUSH_URL: https://loki-ingest.internal/loki/api/v1/push
+          ALLOY_LOG_SOURCE_PATH: /tmp/codestra-alloy-ci/logs
+          ALLOY_JOURNAL_SOURCE_PATH: /tmp/codestra-alloy-ci/journal
+          ALLOY_MACHINE_ID_PATH: /tmp/codestra-alloy-ci/machine-id
+          CODESTRA_BUSINESS_LOG_NETWORK: codestra-logs-platform
+          CODESTRA_OBSERVABILITY_NETWORK: codestra-observability
+        run: |
+          docker compose -f codestra/deploy/compose.candidate.yaml config > /tmp/codestra-alloy-compose.yaml
+          test -s /tmp/codestra-alloy-compose.yaml
+          ! grep -Eq 'published:|host_ip:|:latest([[:space:]]|$)|privileged: true|network_mode: host|pid: host|/var/run/docker\.sock|/run/docker\.sock|/var/lib/docker/containers' /tmp/codestra-alloy-compose.yaml
+          python - <<'PY'
+          import re
+          import yaml
+
+          with open('/tmp/codestra-alloy-compose.yaml', encoding='utf-8') as handle:
+              document = yaml.safe_load(handle)
+          service = document['services']['alloy']
+          references = {
+              'final': service['image'],
+              'builder': service['build']['args']['GO_BUILDER_IMAGE'],
+              'runtime_substrate': service['build']['args']['ALLOY_BASE_IMAGE'],
+          }
+          pattern = re.compile(r'^[^@\s]+@sha256:[0-9a-f]{64}$')
+          invalid = {name: value for name, value in references.items() if not pattern.fullmatch(value)}
+          assert not invalid, f'mutable or malformed image references: {invalid}'
+          assert references['builder'] == (
+              'grafana/alloy-build-image:v0.1.35@sha256:'
+              '9fa2a341b53503ce42cf9900c401d689a68ea67cdec6a20f53d72e3665fb8dc6'
+          )
+          PY
+
+      - name: Set up Go from locked Alloy source
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: upstream/go.mod
+          cache-dependency-path: |
+            upstream/go.sum
+            upstream/collector/go.sum
+
+      - name: Install journal-capable build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends binutils gcc libsystemd-dev pkg-config
+
+      - name: Format, vet, and compile native health probe
+        run: |
+          gofmt -w codestra/deploy/healthcheck.go
+          git diff --exit-code -- codestra/deploy/healthcheck.go
+          go vet codestra/deploy/healthcheck.go
+          CGO_ENABLED=0 go build -buildvcs=false -trimpath -o /tmp/alloy-healthcheck codestra/deploy/healthcheck.go
+
+      - name: Build exact source-bound Alloy executable with journal support
+        working-directory: upstream/collector
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ../../.bin
+          CGO_ENABLED=1 go build \
+            -buildvcs=false \
+            -trimpath \
+            -tags='promtail_journal_enabled' \
+            -o ../../.bin/alloy \
+            .
+          test -x ../../.bin/alloy
+
+          # The real journal implementation resolves libsystemd dynamically
+          # through dlopen/dlsym, so it must not appear as a direct ldd edge.
+          # Prove that the compiled binary embeds the real resolver and symbols,
+          # while the no-op stub diagnostic is absent.
+          ldd ../../.bin/alloy >/tmp/alloy-ldd.txt
+          grep -Eq 'libc\.so|ld-linux' /tmp/alloy-ldd.txt
+          strings ../../.bin/alloy | grep -Fq 'libsystemd.so.0'
+          strings ../../.bin/alloy | grep -Fq 'sd_journal_open'
+          ! strings ../../.bin/alloy | grep -Fq 'loki.source.journal is not enabled'
+
+      - name: Prepare non-secret validation fixtures
+        run: |
+          sudo mkdir -p /var/log/codestra/ci-application/ci-service/docker
+          sudo mkdir -p /run/log/journal
+          sudo mkdir -p /run/secrets
+          printf '{"level":"info","message":"alloy validation fixture"}\n' | sudo tee /var/log/codestra/ci-application/ci-service/application.log >/dev/null
+          printf '{"log":"alloy docker validation fixture\\n","stream":"stdout","time":"2026-08-29T00:00:00.000000000Z"}\n' | sudo tee /var/log/codestra/ci-application/ci-service/docker/ci-json.log >/dev/null
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
+            -keyout /tmp/alloy-client-key \
+            -out /tmp/alloy-client-cert \
+            -subj '/CN=alloy.test' -days 1
+          sudo cp /tmp/alloy-client-key /run/secrets/alloy_client_key
+          sudo cp /tmp/alloy-client-cert /run/secrets/alloy_client_cert
+          sudo cp /tmp/alloy-client-cert /run/secrets/loki_ca
+          sudo chmod 0400 /run/secrets/alloy_client_key
+          sudo chmod 0444 /run/secrets/alloy_client_cert /run/secrets/loki_ca
+
+      - name: Verify formatting and configuration with locked Alloy executable
+        env:
+          CODESTRA_BUSINESS: platform
+          CODESTRA_ENVIRONMENT: test
+          CODESTRA_REGION: ci
+          CODESTRA_SERVER: github-actions
+          CODESTRA_ALLOY_DEPLOYMENT_ID: exact-head-ci
+          LOKI_PUSH_URL: https://loki-ingest.internal/loki/api/v1/push
+        run: |
+          .bin/alloy fmt --write codestra/config.alloy
+          git diff --exit-code -- codestra/config.alloy
+          .bin/alloy validate codestra/config.alloy
+
+      - name: Confirm source-only safety state
+        run: |
+          test "$(python -c 'import json; print(json.load(open("codestra/runtime.v1.json"))["status"])')" = "CONFIG_PREPARED_NOT_DEPLOYED"
+          python - <<'PY'
+          import json
+          runtime = json.load(open('codestra/runtime.v1.json', encoding='utf-8'))
+          image = json.load(open('codestra/source-image-contract.v1.json', encoding='utf-8'))
+          assert runtime['activation'] and all(value is False for value in runtime['activation'].values())
+          assert image['activation'] and all(value is False for value in image['activation'].values())
+          assert image['finalImage']['digest'] is None
+          assert image['runtimeExecutable']['cgoEnabled'] is True
+          assert image['runtimeExecutable']['buildTags'] == ['promtail_journal_enabled']
+          PY

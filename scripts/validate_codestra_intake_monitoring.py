@@ -87,17 +87,33 @@ CREDENTIAL_KEYS = {
     "api_key",
     "apikey",
     "client_secret",
+    "clientsecret",
     "access_token",
+    "accesstoken",
     "refresh_token",
+    "refreshtoken",
     "session_token",
+    "sessiontoken",
     "private_key",
+    "privatekey",
     "root_token",
+    "roottoken",
     "cookie",
     "set_cookie",
+    "setcookie",
 }
 PEM_PRIVATE_KEY = re.compile(
     r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----",
     flags=re.IGNORECASE,
+)
+CREDENTIAL_VALUE_PATTERNS = (
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{8,}=*"),
+    re.compile(
+        r"(?i)\b(?:password|passwd|api[_-]?key|client[_-]?secret|"
+        r"access[_-]?token|refresh[_-]?token|session[_-]?token|"
+        r"root[_-]?token|private[_-]?key)\s*[:=]\s*"
+        r"[^\s,;]{4,}"
+    ),
 )
 
 
@@ -106,6 +122,11 @@ def fail(message: str) -> None:
 
 
 def normalize_key(value: str) -> str:
+    # Split both ordinary camelCase and acronym transitions before reducing
+    # punctuation. This maps clientSecret, APIKey, setCookie and privateKey to
+    # the same governed names as their snake_case spellings.
+    value = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", value)
+    value = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value)
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
 
 
@@ -120,8 +141,12 @@ def scan_credential_values(value: Any, path: str = "$") -> None:
     elif isinstance(value, list):
         for index, child in enumerate(value):
             scan_credential_values(child, f"{path}[{index}]")
-    elif isinstance(value, str) and PEM_PRIVATE_KEY.search(value):
-        fail(f"PEM private-key material found in intake contract at {path}")
+    elif isinstance(value, str):
+        if PEM_PRIVATE_KEY.search(value):
+            fail(f"PEM private-key material found in intake contract at {path}")
+        for pattern in CREDENTIAL_VALUE_PATTERNS:
+            if pattern.search(value):
+                fail(f"credential signature found in intake contract at {path}")
 
 
 def main() -> None:

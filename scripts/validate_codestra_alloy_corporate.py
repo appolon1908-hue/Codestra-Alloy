@@ -3,8 +3,9 @@
 
 Alloy's `stage.labels` component stores promoted labels inside a nested `values`
 map. Regex policies also escape dots in structured field names such as
-`db.statement`. This entrypoint preserves every fail-closed policy check while
-parsing the actual Alloy syntax correctly.
+`db.statement`. The locked formatter may render an empty block as either `{}` or
+`{ }`. This entrypoint preserves every fail-closed policy check while parsing the
+actual Alloy syntax correctly.
 """
 
 from __future__ import annotations
@@ -52,7 +53,6 @@ def validate_alloy_config(module: ModuleType) -> None:
         'sys.env("CODESTRA_REGION")',
         'sys.env("CODESTRA_SERVER")',
         'sys.env("CODESTRA_ALLOY_DEPLOYMENT_ID")',
-        'stage.docker {}',
         'stage.label_drop',
         'values = ["filename"]',
         'loki.process "redact"',
@@ -72,6 +72,9 @@ def validate_alloy_config(module: ModuleType) -> None:
             module.fail(
                 f"Alloy config is missing required corporate behavior: {fragment}"
             )
+
+    if not re.search(r"stage\.docker\s*\{\s*\}", text):
+        module.fail("Alloy config is missing the required Docker decoding stage")
 
     for label in module.REQUIRED_LABELS:
         if label not in text:

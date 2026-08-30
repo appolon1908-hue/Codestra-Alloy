@@ -9,15 +9,15 @@ logging {
 local.file_match "service_files" {
   path_targets = [
     {
-      __path__           = "/var/log/codestra/*/*/*.log",
-      codestra_business  = sys.env("CODESTRA_BUSINESS"),
-      application        = "unclassified",
-      service            = "unclassified",
-      environment        = sys.env("CODESTRA_ENVIRONMENT"),
-      server             = sys.env("CODESTRA_SERVER"),
-      region             = sys.env("CODESTRA_REGION"),
-      deployment         = sys.env("CODESTRA_ALLOY_DEPLOYMENT_ID"),
-      log_source         = "service-file",
+      __path__          = "/var/log/codestra/*/*/*.log",
+      codestra_business = sys.env("CODESTRA_BUSINESS"),
+      application       = "unclassified",
+      service           = "unclassified",
+      environment       = sys.env("CODESTRA_ENVIRONMENT"),
+      server            = sys.env("CODESTRA_SERVER"),
+      region            = sys.env("CODESTRA_REGION"),
+      deployment        = sys.env("CODESTRA_ALLOY_DEPLOYMENT_ID"),
+      log_source        = "service-file",
     },
   ]
   sync_period = "10s"
@@ -40,15 +40,15 @@ loki.source.file "service_files" {
 local.file_match "docker_files" {
   path_targets = [
     {
-      __path__           = "/var/log/codestra/*/*/docker/*-json.log",
-      codestra_business  = sys.env("CODESTRA_BUSINESS"),
-      application        = "unclassified",
-      service            = "unclassified",
-      environment        = sys.env("CODESTRA_ENVIRONMENT"),
-      server             = sys.env("CODESTRA_SERVER"),
-      region             = sys.env("CODESTRA_REGION"),
-      deployment         = sys.env("CODESTRA_ALLOY_DEPLOYMENT_ID"),
-      log_source         = "container-json",
+      __path__          = "/var/log/codestra/*/*/docker/*-json.log",
+      codestra_business = sys.env("CODESTRA_BUSINESS"),
+      application       = "unclassified",
+      service           = "unclassified",
+      environment       = sys.env("CODESTRA_ENVIRONMENT"),
+      server            = sys.env("CODESTRA_SERVER"),
+      region            = sys.env("CODESTRA_REGION"),
+      deployment        = sys.env("CODESTRA_ALLOY_DEPLOYMENT_ID"),
+      log_source        = "container-json",
     },
   ]
   sync_period = "10s"
@@ -181,8 +181,8 @@ loki.write "codestra" {
     }
 
     backoff_config {
-      min_period = "500ms"
-      max_period = "5m"
+      min_period  = "500ms"
+      max_period  = "5m"
       max_retries = 10
     }
   }

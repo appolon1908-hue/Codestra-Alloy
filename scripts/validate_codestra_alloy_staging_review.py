@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""Fail-closed validation for Alloy staging-review remediations."""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import re
+import subprocess
+import sys
+from typing import Any
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+LOCK_PATH = ROOT / "CODESTRA_UPSTREAM_LOCK.json"
+CONFIG_PATH = ROOT / "codestra" / "config.alloy"
+PROFILE_PATH = ROOT / "codestra" / "enterprise-profile.v1.json"
+IMAGE_CONTRACT_PATH = ROOT / "codestra" / "source-image-contract.v1.json"
+DOCKERFILE_PATH = ROOT / "codestra" / "deploy" / "Dockerfile"
+SYNC_PATH = ROOT / ".github" / "workflows" / "upstream-source-sync.yml"
+
+UPSTREAM_COMMIT = "041d2911a30a53f2c9c0317333aedee108a56b0a"
+OFFICIAL_TREE_SHA = "68383917509d3a72fb70a9fe94368e036d343b46"
+IMPORTED_TREE_SHA = "5f272c47f1954ee0b9bffce262d96483883f4b3b"
+SANITIZED_PATH = "integration-tests/docker/tests/loki-azure-event-hubs/certs"
+
+IMPLEMENTED_COLLECTION = [
+    "service_file_logs",
+    "explicit_container_json_logs",
+    "approved_systemd_journal_logs",
+    "alloy_self_metrics",
+]
+EXPECTED_DESTINATIONS = ["loki"]
+EXPECTED_EXTERNAL_AUTHORITIES = {
+    "application_otlp": "Codestra-Telemetry",
+    "host_metrics": "Codestra-Node-Exporter",
+    "container_metrics": "Codestra-cAdvisor",
+    "metrics_storage_slo_and_alert_evaluation": "Codestra-Prometheus",
+}
+
+SENSITIVE_KEYS = (
+    r"authorization|proxy_authorization|cookie|set-cookie|password|passwd|"
+    r"api[_-]?key|client_secret|access_token|refresh_token|session_token|"
+    r"private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|"
+    r"exchange(?:_|\.)(?:api_key|secret)|tenant_id|tenant_name|organization_id|"
+    r"organization_name|customer_id|customer_name|account_id|user_id|user_name|"
+    r"email|phone|message_id|order_id|workflow_id|execution_id|request\.body|"
+    r"response\.body|http\.request\.body|http\.response\.body|db\.statement"
+)
+SCALAR_EXPRESSION = (
+    rf'(?i)("(?:{SENSITIVE_KEYS})"\s*:\s*)'
+    r'(?:-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false|null)'
+    r'(\s*[,}])'
+)
+COMPLEX_EXPRESSION = rf'(?i)"(?:{SENSITIVE_KEYS})"\s*:\s*[\[{{]'
+
+
+def fail(message: str) -> None:
+    print(f"ALLOY_STAGING_REVIEW_ERROR={message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def load_json(path: pathlib.Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"cannot parse {path.relative_to(ROOT)}: {exc}")
+    if not isinstance(value, dict):
+        fail(f"{path.relative_to(ROOT)} must contain an object")
+    return value
+
+
+def read_text(path: pathlib.Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        fail(f"cannot read {path.relative_to(ROOT)}: {exc}")
+
+
+def git_output(*args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if completed.returncode:
+        fail(f"git {' '.join(args)} failed: {completed.stdout.strip()}")
+    return completed.stdout.strip()
+
+
+def validate_upstream_tree() -> dict[str, Any]:
+    lock = load_json(LOCK_PATH)
+    expected = {
+        "schema_version": "1.1",
+        "upstream_clone_url": "https://github.com/grafana/alloy.git",
+        "upstream_ref": "main",
+        "upstream_commit": UPSTREAM_COMMIT,
+        "official_tree_sha": OFFICIAL_TREE_SHA,
+        "import_path": "upstream",
+        "imported_tree_sha": IMPORTED_TREE_SHA,
+        "source_tree_verification_required": True,
+        "deployment_enabled": False,
+        "secret_material_allowed_in_git": False,
+    }
+    for key, value in expected.items():
+        if lock.get(key) != value:
+            fail(f"upstream lock mismatch for {key}")
+
+    sanitization = lock.get("sanitization")
+    if sanitization != {
+        "mode": "remove-explicit-upstream-test-fixtures",
+        "removed_paths": [SANITIZED_PATH],
+        "reason": "Official upstream integration-test certificate and private-key fixtures remain excluded from the Codestra parent repository and GitHub push-protection scope. No runtime or product source is modified.",
+    }:
+        fail("upstream sanitization contract must contain the single approved path")
+
+    actual_tree = git_output("rev-parse", "HEAD:upstream")
+    if actual_tree != IMPORTED_TREE_SHA:
+        fail(f"vendored upstream tree drift: {actual_tree} != {IMPORTED_TREE_SHA}")
+    if (ROOT / "upstream" / SANITIZED_PATH).exists():
+        fail("excluded upstream certificate fixture path is present")
+
+    sync = read_text(SYNC_PATH)
+    for fragment in (
+        "OFFICIAL_TREE_SHA=",
+        "IMPORTED_TREE_SHA=",
+        "git -C .codestra-upstream-src write-tree",
+        "remove-explicit-upstream-test-fixtures",
+        SANITIZED_PATH,
+        "Verify imported tree before review publication",
+    ):
+        if fragment not in sync:
+            fail(f"upstream sync does not reconstruct provenance control: {fragment}")
+    return lock
+
+
+def validate_redaction() -> None:
+    config = read_text(CONFIG_PATH)
+    expressions = re.findall(r"expression\s*=\s*`([^`]*)`", config)
+    if SCALAR_EXPRESSION not in expressions:
+        fail("Alloy config omits exact non-string sensitive JSON replacement")
+    if COMPLEX_EXPRESSION not in expressions:
+        fail("Alloy config omits exact complex sensitive JSON rejection")
+    if 'drop_counter_reason = "complex_sensitive_json_value"' not in config:
+        fail("complex sensitive JSON drop reason is missing")
+
+    scalar = re.compile(SCALAR_EXPRESSION)
+    fixtures = {
+        '{"customer_id":12345}': '{"customer_id":"[REDACTED]"}',
+        '{"account_id":null}': '{"account_id":"[REDACTED]"}',
+        '{"user_id":false,"result":"denied"}': '{"user_id":"[REDACTED]","result":"denied"}',
+        '{"order_id":-1.25e3}': '{"order_id":"[REDACTED]"}',
+    }
+    for source, expected in fixtures.items():
+        actual = scalar.sub(r'\1"[REDACTED]"\2', source)
+        if actual != expected:
+            fail(f"scalar redaction fixture failed: {source} -> {actual}")
+
+    complex_value = re.compile(COMPLEX_EXPRESSION)
+    for source in (
+        '{"customer_id":[12345]}',
+        '{"account_id":{"raw":12345}}',
+        '{"authorization":{"token":"secret"}}',
+    ):
+        if complex_value.search(source) is None:
+            fail(f"complex sensitive JSON fixture is not rejected: {source}")
+
+
+def validate_enterprise_claims() -> None:
+    profile = load_json(PROFILE_PATH)
+    if profile.get("role") != "business-scoped-host-and-service-log-collection-agent":
+        fail("enterprise role overclaims Alloy authority")
+    if profile.get("collect") != IMPLEMENTED_COLLECTION:
+        fail("enterprise collect catalogue must contain implemented signals only")
+    if profile.get("destinations") != EXPECTED_DESTINATIONS:
+        fail("enterprise destination must remain Loki-only")
+    if profile.get("externallyOwnedCapabilities") != EXPECTED_EXTERNAL_AUTHORITIES:
+        fail("external telemetry ownership catalogue mismatch")
+
+    features = profile.get("features")
+    if not isinstance(features, dict):
+        fail("enterprise features must be an object")
+    required_true = {
+        "reusableServerProfiles",
+        "logLabelNormalization",
+        "piiAndSecretRedaction",
+        "localWalBuffering",
+        "backpressureVisibility",
+        "selfMonitoring",
+        "privateLokiWrite",
+        "deploymentMetadata",
+    }
+    required_false = {
+        "prometheusMetricCollection",
+        "applicationOtlpReceiver",
+        "hostMetricCollection",
+        "containerMetricCollection",
+    }
+    if any(features.get(key) is not True for key in required_true):
+        fail("an implemented Alloy enterprise feature is disabled")
+    if any(features.get(key) is not False for key in required_false):
+        fail("an externally owned capability is advertised as implemented")
+    if set(features) != required_true | required_false:
+        fail("unexpected Alloy enterprise feature claim")
+
+
+def validate_source_bound_image(lock: dict[str, Any]) -> None:
+    contract = load_json(IMAGE_CONTRACT_PATH)
+    if contract.get("schemaVersion") != "1.0":
+        fail("source image contract schema mismatch")
+    if contract.get("status") != "SOURCE_BOUND_BUILD_CONTRACT_PREPARED_NOT_RELEASED":
+        fail("source image contract must remain not released")
+
+    source = contract.get("sourceAuthority")
+    if source != {
+        "repository": "https://github.com/grafana/alloy.git",
+        "upstreamCommit": lock["upstream_commit"],
+        "officialTreeSha": lock["official_tree_sha"],
+        "importedTreeSha": lock["imported_tree_sha"],
+        "sanitizedPaths": [SANITIZED_PATH],
+    }:
+        fail("source image authority does not match upstream lock")
+
+    executable = contract.get("runtimeExecutable")
+    if executable != {
+        "buildContext": "upstream/collector",
+        "outputPath": "/bin/alloy",
+        "builtFromImportedTree": True,
+        "inheritedBaseImageExecutableAllowed": False,
+        "embeddedSourceLockPath": "/usr/share/codestra/CODESTRA_UPSTREAM_LOCK.json",
+    }:
+        fail("runtime executable is not bound to the imported source tree")
+
+    runtime_base = contract.get("runtimeBaseImage")
+    if runtime_base != {
+        "role": "runtime-substrate-only",
+        "digestRequired": True,
+        "sourceAuthority": False,
+    }:
+        fail("runtime base image may not become executable source authority")
+
+    final_image = contract.get("finalImage")
+    if not isinstance(final_image, dict):
+        fail("final image contract is missing")
+    if final_image.get("digest") is not None:
+        fail("a final image digest may not be claimed before the verified build")
+    for key in (
+        "digestMustBeRecordedBeforeDeployment",
+        "provenanceMustReferenceImportedTree",
+        "sbomRequired",
+        "signatureRequired",
+    ):
+        if final_image.get(key) is not True:
+            fail(f"final image release gate must be true: {key}")
+
+    activation = contract.get("activation")
+    if not isinstance(activation, dict) or not activation:
+        fail("source image activation map is missing")
+    enabled = sorted(key for key, value in activation.items() if value is not False)
+    if enabled:
+        fail(f"source image activation must remain false: {enabled}")
+
+    dockerfile = read_text(DOCKERFILE_PATH)
+    required_fragments = (
+        "FROM ${GO_BUILDER_IMAGE} AS alloy-builder",
+        "COPY upstream /src/upstream",
+        "WORKDIR /src/upstream/collector",
+        "go build \\",
+        "-buildvcs=false",
+        "-o /out/alloy",
+        "FROM ${ALLOY_BASE_IMAGE}",
+        "COPY --from=alloy-builder --chown=10001:10001 --chmod=0555 /out/alloy /bin/alloy",
+        "COPY --chown=10001:10001 --chmod=0444 CODESTRA_UPSTREAM_LOCK.json /usr/share/codestra/CODESTRA_UPSTREAM_LOCK.json",
+        'LABEL codestra.runtime.base-role="runtime-substrate-only"',
+    )
+    for fragment in required_fragments:
+        if fragment not in dockerfile:
+            fail(f"Dockerfile source binding is missing: {fragment}")
+    if dockerfile.find("FROM ${ALLOY_BASE_IMAGE}") > dockerfile.find(
+        "COPY --from=alloy-builder --chown=10001:10001 --chmod=0555 /out/alloy /bin/alloy"
+    ):
+        fail("source-built Alloy binary must overwrite the runtime-base executable")
+
+
+def main() -> None:
+    lock = validate_upstream_tree()
+    validate_redaction()
+    validate_enterprise_claims()
+    validate_source_bound_image(lock)
+    print("CODESTRA_ALLOY_STAGING_REVIEW_VALIDATION_PASS=1")
+
+
+if __name__ == "__main__":
+    main()

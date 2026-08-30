@@ -56,22 +56,33 @@ def validate_alloy_config(module: ModuleType) -> None:
         'stage.label_drop',
         'values = ["filename"]',
         'loki.process "redact"',
+        'longer_than         = "256KiB"',
+        'drop_counter_reason = "line_too_long"',
         'drop_counter_reason = "private_key_material"',
         'loki.write "codestra"',
-        'tenant_id      = sys.env("CODESTRA_BUSINESS")',
+        'tenant_id           = sys.env("CODESTRA_BUSINESS")',
+        'remote_timeout      = "30s"',
+        'min_backoff_period  = "500ms"',
+        'max_backoff_period  = "5m"',
+        'max_backoff_retries = 10',
+        'retry_on_http_429   = true',
         'ca_file              = "/run/secrets/loki_ca"',
         'cert_file            = "/run/secrets/alloy_client_cert"',
         'key_file             = "/run/secrets/alloy_client_key"',
         'insecure_skip_verify = false',
         'wal {',
         'enabled            = true',
-        'max_retries = 10',
     )
     for fragment in required_fragments:
         if fragment not in text:
             module.fail(
                 f"Alloy config is missing required corporate behavior: {fragment}"
             )
+
+    if "max_line_size" in text or "backoff_config" in text:
+        module.fail(
+            "Alloy config contains an unsupported source-version line or retry setting"
+        )
 
     if not re.search(r"stage\.docker\s*\{\s*\}", text):
         module.fail("Alloy config is missing the required Docker decoding stage")

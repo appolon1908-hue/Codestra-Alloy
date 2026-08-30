@@ -34,32 +34,62 @@ jobs:
           PY
           )
           UPSTREAM_URL="${values[0]}"; UPSTREAM_REF="${values[1]}"; IMPORT_PATH="${values[2]}"
+          SANITIZED_PATH='integration-tests/docker/tests/loki-azure-event-hubs/certs'
           [[ "$UPSTREAM_URL" == "https://github.com/grafana/alloy.git" ]]
           [[ "$UPSTREAM_REF" == "main" ]]
           [[ "$IMPORT_PATH" == "upstream" ]]
           rm -rf .codestra-upstream-src "$IMPORT_PATH"
           GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch "$UPSTREAM_REF" "$UPSTREAM_URL" .codestra-upstream-src
           UPSTREAM_SHA="$(git -C .codestra-upstream-src rev-parse HEAD)"
+          OFFICIAL_TREE_SHA="$(git -C .codestra-upstream-src rev-parse 'HEAD^{tree}')"
+
+          # Keep official product/runtime source byte-for-byte. Only the named
+          # upstream integration-test certificate/private-key fixture directory
+          # is excluded from the Codestra parent repository and push protection.
+          test -d ".codestra-upstream-src/${SANITIZED_PATH}"
+          git -C .codestra-upstream-src rm -r --cached --ignore-unmatch -- "$SANITIZED_PATH"
+          rm -rf ".codestra-upstream-src/${SANITIZED_PATH}"
+          IMPORTED_TREE_SHA="$(git -C .codestra-upstream-src write-tree)"
+
           rm -rf .codestra-upstream-src/.git
           mv .codestra-upstream-src "$IMPORT_PATH"
-          export UPSTREAM_URL UPSTREAM_REF UPSTREAM_SHA
+          export UPSTREAM_URL UPSTREAM_REF UPSTREAM_SHA OFFICIAL_TREE_SHA IMPORTED_TREE_SHA SANITIZED_PATH
           python3 - <<'PY'
           import json, os
           from datetime import datetime, timezone
           from pathlib import Path
           Path('CODESTRA_UPSTREAM_LOCK.json').write_text(json.dumps({
-              'schema_version':'1.0',
+              'schema_version':'1.1',
               'upstream_clone_url':os.environ['UPSTREAM_URL'],
               'upstream_ref':os.environ['UPSTREAM_REF'],
               'upstream_commit':os.environ['UPSTREAM_SHA'],
+              'official_tree_sha':os.environ['OFFICIAL_TREE_SHA'],
               'import_path':'upstream',
+              'imported_tree_sha':os.environ['IMPORTED_TREE_SHA'],
+              'sanitization':{
+                  'mode':'remove-explicit-upstream-test-fixtures',
+                  'removed_paths':[os.environ['SANITIZED_PATH']],
+                  'reason':'Official upstream integration-test certificate and private-key fixtures remain excluded from the Codestra parent repository and GitHub push-protection scope. No runtime or product source is modified.',
+              },
               'synchronized_at':datetime.now(timezone.utc).isoformat(),
+              'source_tree_verification_required':True,
               'deployment_enabled':False,
               'secret_material_allowed_in_git':False,
           }, indent=2) + '\n')
           PY
           echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
+          echo "official_tree_sha=${OFFICIAL_TREE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "imported_tree_sha=${IMPORTED_TREE_SHA}" >> "$GITHUB_OUTPUT"
           echo "branch=automation/alloy-upstream-${UPSTREAM_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify imported tree before review publication
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          expected="${{ steps.import.outputs.imported_tree_sha }}"
+          actual="$(git add -A upstream && git write-tree | xargs -I{} git ls-tree {} upstream | awk '{print $3}')"
+          test -n "$actual"
+          test "$actual" = "$expected"
 
       - name: Commit to a review branch
         id: commit
@@ -98,7 +128,7 @@ jobs:
               --base development \
               --head "$BRANCH" \
               --title "vendor(alloy): review official upstream ${UPSTREAM_SHA:0:12}" \
-              --body "Imports the exact official Grafana Alloy commit \`${UPSTREAM_SHA}\` for locked-source validation. Review-only source update; no runtime, deployment, secret, network, or production activation."
+              --body "Imports the exact official Grafana Alloy commit \`${UPSTREAM_SHA}\`, proves its official tree, removes only the declared upstream test-certificate fixture path, and records the deterministic imported tree. Review-only source update; no runtime, deployment, secret, network, or production activation."
           fi
 
       - name: Prove protected branches were not updated directly

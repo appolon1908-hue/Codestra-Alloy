@@ -18,15 +18,16 @@ IMAGE_CONTRACT_PATH = ROOT / "codestra" / "source-image-contract.v1.json"
 DOCKERFILE_PATH = ROOT / "codestra" / "deploy" / "Dockerfile"
 SYNC_PATH = ROOT / ".github" / "workflows" / "upstream-source-sync.yml"
 
-UPSTREAM_COMMIT = "041d2911a30a53f2c9c0317333aedee108a56b0a"
-OFFICIAL_TREE_SHA = "68383917509d3a72fb70a9fe94368e036d343b46"
-IMPORTED_TREE_SHA = "5f272c47f1954ee0b9bffce262d96483883f4b3b"
+SHA40 = re.compile(r"^[0-9a-f]{40}$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SANITIZED_PATH = "integration-tests/docker/tests/loki-azure-event-hubs/certs"
 SANITIZATION_REASON = (
     "Official upstream integration-test certificate and private-key fixtures remain "
     "excluded from the Codestra parent repository and GitHub push-protection scope. "
     "No runtime or product source is modified."
 )
+BUILDER_IMAGE = "grafana/alloy-build-image:v0.1.35"
+BUILDER_DIGEST = "9fa2a341b53503ce42cf9900c401d689a68ea67cdec6a20f53d72e3665fb8dc6"
 
 IMPLEMENTED_COLLECTION = [
     "service_file_logs",
@@ -94,30 +95,41 @@ def git_output(*args: str) -> str:
     return completed.stdout.strip()
 
 
+def require_sha40(value: Any, label: str) -> str:
+    text = str(value or "")
+    if not SHA40.fullmatch(text):
+        fail(f"{label} must be a full lowercase Git SHA")
+    return text
+
+
 def validate_upstream_tree() -> dict[str, Any]:
     lock = load_json(LOCK_PATH)
-    expected = {
+    expected_static = {
         "schema_version": "1.1",
         "upstream_clone_url": "https://github.com/grafana/alloy.git",
         "upstream_ref": "main",
-        "upstream_commit": UPSTREAM_COMMIT,
-        "official_tree_sha": OFFICIAL_TREE_SHA,
         "import_path": "upstream",
-        "imported_tree_sha": IMPORTED_TREE_SHA,
         "source_tree_verification_required": True,
         "deployment_enabled": False,
         "secret_material_allowed_in_git": False,
     }
-    for key, expected_value in expected.items():
+    for key, expected_value in expected_static.items():
         if lock.get(key) != expected_value:
             fail(f"upstream lock mismatch for {key}")
+
+    upstream_commit = require_sha40(lock.get("upstream_commit"), "upstream_commit")
+    official_tree = require_sha40(lock.get("official_tree_sha"), "official_tree_sha")
+    imported_tree = require_sha40(lock.get("imported_tree_sha"), "imported_tree_sha")
+    if len({upstream_commit, official_tree, imported_tree}) != 3:
+        fail("commit, official tree, and imported tree authorities must be distinct")
+
     if lock.get("sanitization") != {
         "mode": "remove-explicit-upstream-test-fixtures",
         "removed_paths": [SANITIZED_PATH],
         "reason": SANITIZATION_REASON,
     }:
         fail("upstream sanitization must contain the single approved fixture path")
-    if git_output("rev-parse", "HEAD:upstream") != IMPORTED_TREE_SHA:
+    if git_output("rev-parse", "HEAD:upstream") != imported_tree:
         fail("vendored upstream tree does not match imported_tree_sha")
     if (ROOT / "upstream" / SANITIZED_PATH).exists():
         fail("excluded upstream certificate fixture path is present")
@@ -130,9 +142,13 @@ def validate_upstream_tree() -> dict[str, Any]:
         "remove-explicit-upstream-test-fixtures",
         SANITIZED_PATH,
         "Verify imported tree before review publication",
+        "codestra/source-image-contract.v1.json",
+        "'upstreamCommit':os.environ['UPSTREAM_SHA']",
+        "'officialTreeSha':os.environ['OFFICIAL_TREE_SHA']",
+        "'importedTreeSha':os.environ['IMPORTED_TREE_SHA']",
     ):
         if fragment not in sync:
-            fail(f"upstream sync omits provenance control: {fragment}")
+            fail(f"upstream sync omits provenance or contract regeneration: {fragment}")
     return lock
 
 
@@ -145,6 +161,8 @@ def validate_redaction() -> None:
         fail("complex sensitive JSON rejection is missing")
     if 'drop_counter_reason = "complex_sensitive_json_value"' not in config:
         fail("complex sensitive JSON drop reason is missing")
+    if 'replace    = "$1\\\"[REDACTED]\\\"$2"' not in config:
+        fail("scalar sensitive JSON replacement must preserve valid JSON quoting")
 
     scalar = re.compile(SCALAR_EXPRESSION)
     fixtures = {
@@ -220,14 +238,24 @@ def validate_source_bound_image(lock: dict[str, Any]) -> None:
         "sanitizedPaths": [SANITIZED_PATH],
     }:
         fail("source image authority does not match upstream lock")
+    if contract.get("builder") != {
+        "image": BUILDER_IMAGE,
+        "digest": BUILDER_DIGEST,
+        "cgoToolchainRequired": True,
+        "systemdDevelopmentFilesRequired": True,
+    }:
+        fail("source builder must remain the approved journal-capable image")
     if contract.get("runtimeExecutable") != {
         "buildContext": "upstream/collector",
         "outputPath": "/bin/alloy",
         "builtFromImportedTree": True,
+        "cgoEnabled": True,
+        "buildTags": ["promtail_journal_enabled"],
+        "systemdJournalImplementation": "enabled",
         "inheritedBaseImageExecutableAllowed": False,
         "embeddedSourceLockPath": "/usr/share/codestra/CODESTRA_UPSTREAM_LOCK.json",
     }:
-        fail("runtime executable is not bound to the imported source tree")
+        fail("runtime executable is not journal-capable or source-bound")
     if contract.get("runtimeBaseImage") != {
         "role": "runtime-substrate-only",
         "digestRequired": True,
@@ -257,13 +285,15 @@ def validate_source_bound_image(lock: dict[str, Any]) -> None:
         "FROM ${GO_BUILDER_IMAGE} AS alloy-builder",
         "COPY upstream /src/upstream",
         "WORKDIR /src/upstream/collector",
-        "go build",
+        "CGO_ENABLED=1 GOOS=linux go build",
         "-buildvcs=false",
+        "-tags='promtail_journal_enabled'",
         "-o /out/alloy",
         "FROM ${ALLOY_BASE_IMAGE}",
         "COPY --from=alloy-builder --chown=10001:10001 --chmod=0555 /out/alloy /bin/alloy",
         "COPY --chown=10001:10001 --chmod=0444 CODESTRA_UPSTREAM_LOCK.json /usr/share/codestra/CODESTRA_UPSTREAM_LOCK.json",
         'LABEL codestra.runtime.base-role="runtime-substrate-only"',
+        'LABEL codestra.feature.systemd-journal="promtail_journal_enabled"',
     )
     for fragment in required_fragments:
         if fragment not in dockerfile:

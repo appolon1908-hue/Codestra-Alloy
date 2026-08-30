@@ -178,7 +178,15 @@ jobs:
             -o ../../.bin/alloy \
             .
           test -x ../../.bin/alloy
-          ldd ../../.bin/alloy | grep -q 'libsystemd'
+
+          # The real journal implementation resolves libsystemd dynamically
+          # through dlopen/dlsym, so it must not appear as a direct ldd edge.
+          # Prove that the compiled binary embeds the real resolver and symbols,
+          # while the no-op stub diagnostic is absent.
+          ldd ../../.bin/alloy >/tmp/alloy-ldd.txt
+          grep -Eq 'libc\.so|ld-linux' /tmp/alloy-ldd.txt
+          strings ../../.bin/alloy | grep -Fq 'libsystemd.so.0'
+          strings ../../.bin/alloy | grep -Fq 'sd_journal_open'
           ! strings ../../.bin/alloy | grep -Fq 'loki.source.journal is not enabled'
 
       - name: Prepare non-secret validation fixtures

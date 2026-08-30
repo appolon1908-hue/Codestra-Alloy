@@ -1,0 +1,49 @@
+name: Validate Codestra Alloy intake monitoring
+
+on:
+  pull_request:
+    paths:
+      - "codestra/intake-monitoring.v1.json"
+      - "scripts/validate_codestra_intake_monitoring.py"
+      - ".github/workflows/validate-codestra-intake-monitoring.yml"
+  push:
+    branches:
+      - development
+      - test
+      - staging
+      - production
+      - main
+    paths:
+      - "codestra/intake-monitoring.v1.json"
+      - "scripts/validate_codestra_intake_monitoring.py"
+      - ".github/workflows/validate-codestra-intake-monitoring.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alloy-intake-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact head
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Compile and validate intake monitoring contract
+        env:
+          PYTHONPYCACHEPREFIX: /tmp/codestra-alloy-intake-pycache
+        run: |
+          python -m py_compile scripts/validate_codestra_intake_monitoring.py
+          python scripts/validate_codestra_intake_monitoring.py
+      - name: Confirm source-only safety state
+        run: |
+          grep -q '"runtimeApplied": false' codestra/intake-monitoring.v1.json
+          grep -q '"productionTargetsEnabled": false' codestra/intake-monitoring.v1.json
+          grep -q '"liveBusinessWritesEnabledByThisContract": false' codestra/intake-monitoring.v1.json

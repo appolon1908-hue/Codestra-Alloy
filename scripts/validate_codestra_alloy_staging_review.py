@@ -22,6 +22,11 @@ UPSTREAM_COMMIT = "041d2911a30a53f2c9c0317333aedee108a56b0a"
 OFFICIAL_TREE_SHA = "68383917509d3a72fb70a9fe94368e036d343b46"
 IMPORTED_TREE_SHA = "5f272c47f1954ee0b9bffce262d96483883f4b3b"
 SANITIZED_PATH = "integration-tests/docker/tests/loki-azure-event-hubs/certs"
+SANITIZATION_REASON = (
+    "Official upstream integration-test certificate and private-key fixtures remain "
+    "excluded from the Codestra parent repository and GitHub push-protection scope. "
+    "No runtime or product source is modified."
+)
 
 IMPLEMENTED_COLLECTION = [
     "service_file_logs",
@@ -29,8 +34,7 @@ IMPLEMENTED_COLLECTION = [
     "approved_systemd_journal_logs",
     "alloy_self_metrics",
 ]
-EXPECTED_DESTINATIONS = ["loki"]
-EXPECTED_EXTERNAL_AUTHORITIES = {
+EXTERNAL_AUTHORITIES = {
     "application_otlp": "Codestra-Telemetry",
     "host_metrics": "Codestra-Node-Exporter",
     "container_metrics": "Codestra-cAdvisor",
@@ -104,21 +108,17 @@ def validate_upstream_tree() -> dict[str, Any]:
         "deployment_enabled": False,
         "secret_material_allowed_in_git": False,
     }
-    for key, value in expected.items():
-        if lock.get(key) != value:
+    for key, expected_value in expected.items():
+        if lock.get(key) != expected_value:
             fail(f"upstream lock mismatch for {key}")
-
-    sanitization = lock.get("sanitization")
-    if sanitization != {
+    if lock.get("sanitization") != {
         "mode": "remove-explicit-upstream-test-fixtures",
         "removed_paths": [SANITIZED_PATH],
-        "reason": "Official upstream integration-test certificate and private-key fixtures remain excluded from the Codestra parent repository and GitHub push-protection scope. No runtime or product source is modified.",
+        "reason": SANITIZATION_REASON,
     }:
-        fail("upstream sanitization contract must contain the single approved path")
-
-    actual_tree = git_output("rev-parse", "HEAD:upstream")
-    if actual_tree != IMPORTED_TREE_SHA:
-        fail(f"vendored upstream tree drift: {actual_tree} != {IMPORTED_TREE_SHA}")
+        fail("upstream sanitization must contain the single approved fixture path")
+    if git_output("rev-parse", "HEAD:upstream") != IMPORTED_TREE_SHA:
+        fail("vendored upstream tree does not match imported_tree_sha")
     if (ROOT / "upstream" / SANITIZED_PATH).exists():
         fail("excluded upstream certificate fixture path is present")
 
@@ -132,7 +132,7 @@ def validate_upstream_tree() -> dict[str, Any]:
         "Verify imported tree before review publication",
     ):
         if fragment not in sync:
-            fail(f"upstream sync does not reconstruct provenance control: {fragment}")
+            fail(f"upstream sync omits provenance control: {fragment}")
     return lock
 
 
@@ -140,9 +140,9 @@ def validate_redaction() -> None:
     config = read_text(CONFIG_PATH)
     expressions = re.findall(r"expression\s*=\s*`([^`]*)`", config)
     if SCALAR_EXPRESSION not in expressions:
-        fail("Alloy config omits exact non-string sensitive JSON replacement")
+        fail("non-string sensitive JSON replacement is missing")
     if COMPLEX_EXPRESSION not in expressions:
-        fail("Alloy config omits exact complex sensitive JSON rejection")
+        fail("complex sensitive JSON rejection is missing")
     if 'drop_counter_reason = "complex_sensitive_json_value"' not in config:
         fail("complex sensitive JSON drop reason is missing")
 
@@ -174,9 +174,9 @@ def validate_enterprise_claims() -> None:
         fail("enterprise role overclaims Alloy authority")
     if profile.get("collect") != IMPLEMENTED_COLLECTION:
         fail("enterprise collect catalogue must contain implemented signals only")
-    if profile.get("destinations") != EXPECTED_DESTINATIONS:
+    if profile.get("destinations") != ["loki"]:
         fail("enterprise destination must remain Loki-only")
-    if profile.get("externallyOwnedCapabilities") != EXPECTED_EXTERNAL_AUTHORITIES:
+    if profile.get("externallyOwnedCapabilities") != EXTERNAL_AUTHORITIES:
         fail("external telemetry ownership catalogue mismatch")
 
     features = profile.get("features")
@@ -212,9 +212,7 @@ def validate_source_bound_image(lock: dict[str, Any]) -> None:
         fail("source image contract schema mismatch")
     if contract.get("status") != "SOURCE_BOUND_BUILD_CONTRACT_PREPARED_NOT_RELEASED":
         fail("source image contract must remain not released")
-
-    source = contract.get("sourceAuthority")
-    if source != {
+    if contract.get("sourceAuthority") != {
         "repository": "https://github.com/grafana/alloy.git",
         "upstreamCommit": lock["upstream_commit"],
         "officialTreeSha": lock["official_tree_sha"],
@@ -222,9 +220,7 @@ def validate_source_bound_image(lock: dict[str, Any]) -> None:
         "sanitizedPaths": [SANITIZED_PATH],
     }:
         fail("source image authority does not match upstream lock")
-
-    executable = contract.get("runtimeExecutable")
-    if executable != {
+    if contract.get("runtimeExecutable") != {
         "buildContext": "upstream/collector",
         "outputPath": "/bin/alloy",
         "builtFromImportedTree": True,
@@ -232,20 +228,16 @@ def validate_source_bound_image(lock: dict[str, Any]) -> None:
         "embeddedSourceLockPath": "/usr/share/codestra/CODESTRA_UPSTREAM_LOCK.json",
     }:
         fail("runtime executable is not bound to the imported source tree")
-
-    runtime_base = contract.get("runtimeBaseImage")
-    if runtime_base != {
+    if contract.get("runtimeBaseImage") != {
         "role": "runtime-substrate-only",
         "digestRequired": True,
         "sourceAuthority": False,
     }:
-        fail("runtime base image may not become executable source authority")
+        fail("runtime base image may not become source authority")
 
     final_image = contract.get("finalImage")
-    if not isinstance(final_image, dict):
-        fail("final image contract is missing")
-    if final_image.get("digest") is not None:
-        fail("a final image digest may not be claimed before the verified build")
+    if not isinstance(final_image, dict) or final_image.get("digest") is not None:
+        fail("final image digest may not be claimed before verified build")
     for key in (
         "digestMustBeRecordedBeforeDeployment",
         "provenanceMustReferenceImportedTree",
@@ -254,20 +246,18 @@ def validate_source_bound_image(lock: dict[str, Any]) -> None:
     ):
         if final_image.get(key) is not True:
             fail(f"final image release gate must be true: {key}")
-
     activation = contract.get("activation")
     if not isinstance(activation, dict) or not activation:
         fail("source image activation map is missing")
-    enabled = sorted(key for key, value in activation.items() if value is not False)
-    if enabled:
-        fail(f"source image activation must remain false: {enabled}")
+    if any(value is not False for value in activation.values()):
+        fail("source image activation must remain false")
 
     dockerfile = read_text(DOCKERFILE_PATH)
     required_fragments = (
         "FROM ${GO_BUILDER_IMAGE} AS alloy-builder",
         "COPY upstream /src/upstream",
         "WORKDIR /src/upstream/collector",
-        "go build \\",
+        "go build",
         "-buildvcs=false",
         "-o /out/alloy",
         "FROM ${ALLOY_BASE_IMAGE}",
@@ -278,9 +268,11 @@ def validate_source_bound_image(lock: dict[str, Any]) -> None:
     for fragment in required_fragments:
         if fragment not in dockerfile:
             fail(f"Dockerfile source binding is missing: {fragment}")
-    if dockerfile.find("FROM ${ALLOY_BASE_IMAGE}") > dockerfile.find(
+    base_index = dockerfile.find("FROM ${ALLOY_BASE_IMAGE}")
+    copy_index = dockerfile.find(
         "COPY --from=alloy-builder --chown=10001:10001 --chmod=0555 /out/alloy /bin/alloy"
-    ):
+    )
+    if base_index < 0 or copy_index <= base_index:
         fail("source-built Alloy binary must overwrite the runtime-base executable")
 
 

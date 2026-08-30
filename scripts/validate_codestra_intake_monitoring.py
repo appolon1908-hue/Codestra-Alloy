@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "codestra" / "intake-monitoring.v1.json"
@@ -72,10 +74,54 @@ REQUIRED_SOURCES = {
     "intake-workers",
     "odoo-intake-adapter",
 }
+REQUIRED_ACTIVATION = {
+    "runtimeApplied",
+    "productionTargetsEnabled",
+    "liveBusinessWritesEnabledByThisContract",
+}
+CREDENTIAL_KEYS = {
+    "authorization",
+    "bearer_token",
+    "password",
+    "passwd",
+    "api_key",
+    "apikey",
+    "client_secret",
+    "access_token",
+    "refresh_token",
+    "session_token",
+    "private_key",
+    "root_token",
+    "cookie",
+    "set_cookie",
+}
+PEM_PRIVATE_KEY = re.compile(
+    r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----",
+    flags=re.IGNORECASE,
+)
 
 
 def fail(message: str) -> None:
     raise SystemExit(message)
+
+
+def normalize_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def scan_credential_values(value: Any, path: str = "$") -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = normalize_key(str(key))
+            child_path = f"{path}.{key}"
+            if normalized in CREDENTIAL_KEYS and child not in (None, "", False, [], {}):
+                fail(f"credential-shaped value found in intake contract at {child_path}")
+            scan_credential_values(child, child_path)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            scan_credential_values(child, f"{path}[{index}]")
+    elif isinstance(value, str) and PEM_PRIVATE_KEY.search(value):
+        fail(f"PEM private-key material found in intake contract at {path}")
 
 
 def main() -> None:
@@ -103,19 +149,24 @@ def main() -> None:
         fail("an intake field cannot be both safe and forbidden")
 
     privacy = data.get("privacyRules", {})
-    for field in (
+    required_privacy = {
         "rawFormAnswersInTelemetry",
         "rawSurveyAnswersInTelemetry",
         "contactDataInMetricLabels",
         "customerOrPersonDataInLogLabels",
         "anonymousSurveyMayCarryContactOrLeadId",
         "browserReceivesObservabilityCredentials",
-    ):
+    }
+    if set(privacy) != required_privacy:
+        fail("Alloy intake privacy-rule catalogue mismatch")
+    for field in required_privacy:
         if privacy.get(field) is not False:
             fail(f"privacy boundary must remain false: {field}")
 
     activation = data.get("activation", {})
-    if not activation or any(value is not False for value in activation.values()):
+    if set(activation) != REQUIRED_ACTIVATION:
+        fail("Alloy intake activation-gate catalogue mismatch")
+    if any(value is not False for value in activation.values()):
         fail("all intake activation gates must remain false")
 
     features = data.get("features", {})
@@ -151,10 +202,10 @@ def main() -> None:
         if fragment not in normalized:
             fail(f"Alloy private-key suppression omits: {fragment}")
 
-    serialized = CONTRACT.read_text(encoding="utf-8").lower()
-    for secret_shape in ("-----begin private key-----", "bearer ", "password=", "api_key="):
-        if secret_shape in serialized:
-            fail("secret-shaped content found in intake contract")
+    scan_credential_values(data)
+    serialized = CONTRACT.read_text(encoding="utf-8")
+    if PEM_PRIVATE_KEY.search(serialized):
+        fail("PEM private-key material found in intake contract")
 
     print("Codestra Alloy intake monitoring validation PASS")
 

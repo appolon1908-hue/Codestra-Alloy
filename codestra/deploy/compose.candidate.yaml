@@ -6,9 +6,9 @@ services:
       context: ../..
       dockerfile: codestra/deploy/Dockerfile
       args:
-        GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:?set an immutable Go builder image including sha256 digest}
-        ALLOY_BASE_IMAGE: ${ALLOY_BASE_IMAGE:?set an immutable official Alloy image including sha256 digest}
-    image: ${CODESTRA_ALLOY_IMAGE:?set the immutable Codestra Alloy image reference including sha256 digest}
+        GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE_NAME:?set the pinned Go builder name and tag}@sha256:${GO_BUILDER_IMAGE_DIGEST:?set the 64-character Go builder sha256 digest}
+        ALLOY_BASE_IMAGE: ${ALLOY_BASE_IMAGE_NAME:?set the pinned official Alloy name and tag}@sha256:${ALLOY_BASE_IMAGE_DIGEST:?set the 64-character official Alloy sha256 digest}
+    image: ${CODESTRA_ALLOY_IMAGE_NAME:?set the immutable Codestra Alloy image name and tag}@sha256:${CODESTRA_ALLOY_IMAGE_DIGEST:?set the 64-character Codestra Alloy sha256 digest}
     command:
       - run
       # The listener is reachable only on attached private container networks;

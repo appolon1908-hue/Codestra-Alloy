@@ -4,14 +4,16 @@ ARG GO_BUILDER_IMAGE
 ARG ALLOY_BASE_IMAGE
 
 # Build the executable from the repository's verified, sanitized upstream tree.
-# The runtime base image is only an OS/library substrate; its bundled Alloy
-# executable is overwritten and never becomes the Codestra source authority.
+# The approved builder contains the C toolchain and libsystemd development files
+# required by the real journal implementation. The runtime base is only an
+# OS/library substrate; its bundled Alloy executable is overwritten.
 FROM ${GO_BUILDER_IMAGE} AS alloy-builder
 COPY upstream /src/upstream
 WORKDIR /src/upstream/collector
-RUN CGO_ENABLED=0 GOOS=linux go build \
+RUN CGO_ENABLED=1 GOOS=linux go build \
       -buildvcs=false \
       -trimpath \
+      -tags='promtail_journal_enabled' \
       -ldflags='-s -w -buildid=' \
       -o /out/alloy \
       .
@@ -31,6 +33,7 @@ LABEL org.opencontainers.image.description="Business-scoped, non-privileged host
 LABEL org.opencontainers.image.vendor="Codestra"
 LABEL codestra.source.authority="vendored-verified-upstream-tree"
 LABEL codestra.runtime.base-role="runtime-substrate-only"
+LABEL codestra.feature.systemd-journal="promtail_journal_enabled"
 
 # The final /bin/alloy is always the binary compiled above from this repository's
 # exact imported tree. The executable inherited from ALLOY_BASE_IMAGE is replaced.

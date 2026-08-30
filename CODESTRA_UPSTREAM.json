@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "component": "Grafana Alloy",
+  "upstream_repository": "grafana/alloy",
+  "upstream_clone_url": "https://github.com/grafana/alloy.git",
+  "upstream_ref": "main",
+  "import_path": "upstream",
+  "deployment_enabled": false,
+  "secret_material_allowed_in_git": false
+}

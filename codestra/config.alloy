@@ -1,0 +1,222 @@
+logging {
+	level  = "info"
+	format = "json"
+}
+
+// Applications and containers expose logs through an explicit business-scoped
+// host directory: /var/log/codestra/<application>/<service>/*.log.
+// The deployment controller mounts only the assigned business root into this path.
+local.file_match "service_files" {
+	path_targets = [
+		{
+			__path__          = "/var/log/codestra/*/*/*.log",
+			codestra_business = sys.env("CODESTRA_BUSINESS"),
+			application       = "unclassified",
+			service           = "unclassified",
+			environment       = sys.env("CODESTRA_ENVIRONMENT"),
+			server            = sys.env("CODESTRA_SERVER"),
+			region            = sys.env("CODESTRA_REGION"),
+			deployment        = sys.env("CODESTRA_ALLOY_DEPLOYMENT_ID"),
+			log_source        = "service-file",
+		},
+	]
+	sync_period = "10s"
+}
+
+loki.source.file "service_files" {
+	targets    = local.file_match.service_files.targets
+	forward_to = [loki.process.service_files.receiver]
+
+	file_watch {
+		min_poll_frequency = "250ms"
+		max_poll_frequency = "1s"
+	}
+}
+
+// Container stdout/stderr may be mounted explicitly per application/service at
+// /var/log/codestra/<application>/<service>/docker/*-json.log. The global Docker
+// container directory and Docker socket are deliberately not mounted.
+local.file_match "docker_files" {
+	path_targets = [
+		{
+			__path__          = "/var/log/codestra/*/*/docker/*-json.log",
+			codestra_business = sys.env("CODESTRA_BUSINESS"),
+			application       = "unclassified",
+			service           = "unclassified",
+			environment       = sys.env("CODESTRA_ENVIRONMENT"),
+			server            = sys.env("CODESTRA_SERVER"),
+			region            = sys.env("CODESTRA_REGION"),
+			deployment        = sys.env("CODESTRA_ALLOY_DEPLOYMENT_ID"),
+			log_source        = "container-json",
+		},
+	]
+	sync_period = "10s"
+}
+
+loki.source.file "docker_files" {
+	targets    = local.file_match.docker_files.targets
+	forward_to = [loki.process.docker_files.receiver]
+
+	file_watch {
+		min_poll_frequency = "250ms"
+		max_poll_frequency = "1s"
+	}
+}
+
+// The mounted journal directory must be the real persistent journal only for the
+// platform/dedicated-host profile. Business instances on a shared host mount an
+// empty, owned directory so they cannot read unrelated businesses' system logs.
+loki.source.journal "system" {
+	path       = "/run/log/journal"
+	max_age    = "12h"
+	forward_to = [loki.process.redact.receiver]
+	labels     = {
+		codestra_business = sys.env("CODESTRA_BUSINESS"),
+		application       = "infrastructure",
+		service           = "systemd-journal",
+		environment       = sys.env("CODESTRA_ENVIRONMENT"),
+		server            = sys.env("CODESTRA_SERVER"),
+		region            = sys.env("CODESTRA_REGION"),
+		deployment        = sys.env("CODESTRA_ALLOY_DEPLOYMENT_ID"),
+		log_source        = "journal",
+	}
+}
+
+loki.process "service_files" {
+	stage.regex {
+		source     = "filename"
+		expression = `^/var/log/codestra/(?P<application>[a-z0-9][a-z0-9._-]{0,62})/(?P<service>[a-z0-9][a-z0-9._-]{0,62})/.*$`
+	}
+
+	stage.labels {
+		values = {
+			application = "",
+			service     = "",
+		}
+	}
+
+	stage.label_drop {
+		values = ["filename"]
+	}
+
+	forward_to = [loki.process.redact.receiver]
+}
+
+loki.process "docker_files" {
+	stage.docker { }
+
+	stage.regex {
+		source     = "filename"
+		expression = `^/var/log/codestra/(?P<application>[a-z0-9][a-z0-9._-]{0,62})/(?P<service>[a-z0-9][a-z0-9._-]{0,62})/docker/.*$`
+	}
+
+	stage.labels {
+		values = {
+			application = "",
+			service     = "",
+		}
+	}
+
+	stage.label_drop {
+		values = ["filename"]
+	}
+
+	forward_to = [loki.process.redact.receiver]
+}
+
+// Redaction is defense in depth. Applications still own data minimization and
+// must never intentionally log secrets, raw customer payloads, or signing data.
+loki.process "redact" {
+	stage.drop {
+		longer_than         = "256KiB"
+		drop_counter_reason = "line_too_long"
+	}
+
+	// PEM markers and body lines are independent log entries in ordinary file
+	// output. Drop both markers plus long or padded base64-only lines so a key
+	// cannot leak merely because it was split across multiple records.
+	stage.drop {
+		expression          = `(?i)-----BEGIN (?:OPENSSH |RSA |EC |DSA )?PRIVATE KEY-----`
+		drop_counter_reason = "private_key_material"
+	}
+
+	stage.drop {
+		expression          = `(?i)-----END (?:OPENSSH |RSA |EC |DSA )?PRIVATE KEY-----`
+		drop_counter_reason = "private_key_material"
+	}
+
+	stage.drop {
+		expression          = `(?i)^\s*(?:[A-Za-z0-9+/]{16,}={0,2}|[A-Za-z0-9+/]{4,}={1,2})\s*$`
+		drop_counter_reason = "pem_or_base64_material"
+	}
+
+	// Intake applications must emit sanitized operational events. Any intake
+	// record that still carries a forbidden form, survey, contact, campaign, or
+	// correlation payload is rejected as a whole before the Loki write stage.
+	stage.match {
+		selector = `{service=~"middleware-intake|intake-workers|odoo-intake-adapter"}`
+
+		stage.drop {
+			expression          = `(?i)"(?:tenant_id|site_id|campaign_id|form_id|survey_id|question_id|customer_id|contact_id|lead_id|response_id|account_id|user_id|email|phone|name|address|message|transcript|answers|custom_fields|consent_text|request_id|correlation_id|trace_id|span_id|idempotency_key|raw_url|query_string|referrer|landing_page|utm_source|utm_medium|utm_campaign|utm_term|utm_content)"\s*:`
+			drop_counter_reason = "intake_sensitive_payload"
+		}
+
+		stage.drop {
+			expression          = `(?i)\b(?:tenant_id|site_id|campaign_id|form_id|survey_id|question_id|customer_id|contact_id|lead_id|response_id|account_id|user_id|email|phone|name|address|message|transcript|answers|custom_fields|consent_text|request_id|correlation_id|trace_id|span_id|idempotency_key|raw_url|query_string|referrer|landing_page|utm_source|utm_medium|utm_campaign|utm_term|utm_content)\s*[=:]`
+			drop_counter_reason = "intake_sensitive_payload"
+		}
+	}
+
+	stage.replace {
+		expression = `(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*`
+		replace    = "Bearer [REDACTED]"
+	}
+
+	stage.replace {
+		expression = `(?i)("(?:authorization|proxy_authorization|cookie|set-cookie|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret))"\s*:\s*")[^"]*(")`
+		replace    = "$1[REDACTED]$2"
+	}
+
+	stage.replace {
+		expression = `(?i)\b(authorization|proxy_authorization|cookie|set-cookie|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret))\s*[=:]\s*[^\s,&;]+`
+		replace    = "$1=[REDACTED]"
+	}
+
+	stage.replace {
+		expression = `(?i)("(?:tenant_id|tenant_name|organization_id|organization_name|customer_id|customer_name|account_id|user_id|user_name|email|phone|message_id|order_id|workflow_id|execution_id|request\.body|response\.body|http\.request\.body|http\.response\.body|db\.statement)"\s*:\s*")[^"]*(")`
+		replace    = "$1[REDACTED]$2"
+	}
+
+	stage.replace {
+		expression = `(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}`
+		replace    = "[REDACTED_EMAIL]"
+	}
+
+	forward_to = [loki.write.codestra.receiver]
+}
+
+loki.write "codestra" {
+	endpoint {
+		url                 = sys.env("LOKI_PUSH_URL")
+		tenant_id           = sys.env("CODESTRA_BUSINESS")
+		remote_timeout      = "30s"
+		min_backoff_period  = "500ms"
+		max_backoff_period  = "5m"
+		max_backoff_retries = 10
+		retry_on_http_429   = true
+
+		tls_config {
+			ca_file              = "/run/secrets/loki_ca"
+			cert_file            = "/run/secrets/alloy_client_cert"
+			key_file             = "/run/secrets/alloy_client_key"
+			insecure_skip_verify = false
+		}
+	}
+
+	wal {
+		enabled            = true
+		max_segment_age    = "1h"
+		min_read_frequency = "250ms"
+		max_read_frequency = "1s"
+	}
+}

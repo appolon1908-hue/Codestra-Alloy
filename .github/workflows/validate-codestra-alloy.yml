@@ -6,22 +6,24 @@ on:
       - 'codestra/**'
       - 'scripts/validate_codestra_alloy.py'
       - 'scripts/validate_codestra_alloy_corporate.py'
+      - 'scripts/validate_codestra_intake_monitoring.py'
       - '.github/workflows/validate-codestra-alloy.yml'
-      - 'upstream/go.mod'
-      - 'upstream/go.sum'
-      - 'upstream/collector/go.mod'
-      - 'upstream/collector/go.sum'
+      - '.github/workflows/upstream-source-sync.yml'
+      - 'CODESTRA_UPSTREAM.json'
+      - 'CODESTRA_UPSTREAM_LOCK.json'
+      - 'upstream/**'
   push:
     branches: [development, test, staging, production, main]
     paths:
       - 'codestra/**'
       - 'scripts/validate_codestra_alloy.py'
       - 'scripts/validate_codestra_alloy_corporate.py'
+      - 'scripts/validate_codestra_intake_monitoring.py'
       - '.github/workflows/validate-codestra-alloy.yml'
-      - 'upstream/go.mod'
-      - 'upstream/go.sum'
-      - 'upstream/collector/go.mod'
-      - 'upstream/collector/go.sum'
+      - '.github/workflows/upstream-source-sync.yml'
+      - 'CODESTRA_UPSTREAM.json'
+      - 'CODESTRA_UPSTREAM_LOCK.json'
+      - 'upstream/**'
 
 permissions:
   contents: read
@@ -55,9 +57,12 @@ jobs:
 
       - name: Render hardened Compose candidate
         env:
-          GO_BUILDER_IMAGE: golang:9.9@sha256:0000000000000000000000000000000000000000000000000000000000000000
-          ALLOY_BASE_IMAGE: grafana/alloy:99.0.0@sha256:1111111111111111111111111111111111111111111111111111111111111111
-          CODESTRA_ALLOY_IMAGE: ghcr.io/appolon1908-hue/codestra-alloy:ci@sha256:2222222222222222222222222222222222222222222222222222222222222222
+          GO_BUILDER_IMAGE_NAME: golang:9.9
+          GO_BUILDER_IMAGE_DIGEST: 0000000000000000000000000000000000000000000000000000000000000000
+          ALLOY_BASE_IMAGE_NAME: grafana/alloy:99.0.0
+          ALLOY_BASE_IMAGE_DIGEST: 1111111111111111111111111111111111111111111111111111111111111111
+          CODESTRA_ALLOY_IMAGE_NAME: ghcr.io/appolon1908-hue/codestra-alloy:ci
+          CODESTRA_ALLOY_IMAGE_DIGEST: 2222222222222222222222222222222222222222222222222222222222222222
           CODESTRA_BUSINESS: platform
           CODESTRA_ENVIRONMENT: test
           CODESTRA_REGION: ci
@@ -73,6 +78,22 @@ jobs:
           docker compose -f codestra/deploy/compose.candidate.yaml config > /tmp/codestra-alloy-compose.yaml
           test -s /tmp/codestra-alloy-compose.yaml
           ! grep -Eq 'published:|host_ip:|:latest([[:space:]]|$)|privileged: true|network_mode: host|pid: host|/var/run/docker\.sock|/run/docker\.sock|/var/lib/docker/containers' /tmp/codestra-alloy-compose.yaml
+          python - <<'PY'
+          import re
+          import yaml
+
+          with open('/tmp/codestra-alloy-compose.yaml', encoding='utf-8') as handle:
+              document = yaml.safe_load(handle)
+          service = document['services']['alloy']
+          references = {
+              'final': service['image'],
+              'builder': service['build']['args']['GO_BUILDER_IMAGE'],
+              'upstream': service['build']['args']['ALLOY_BASE_IMAGE'],
+          }
+          pattern = re.compile(r'^[^@\s]+@sha256:[0-9a-f]{64}$')
+          invalid = {name: value for name, value in references.items() if not pattern.fullmatch(value)}
+          assert not invalid, f'mutable or malformed image references: {invalid}'
+          PY
 
       - name: Set up Go from locked Alloy source
         uses: actions/setup-go@v6

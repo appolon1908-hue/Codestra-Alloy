@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   sync:
@@ -17,8 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: development
           fetch-depth: 0
-      - name: Import official upstream source
+
+      - name: Import official upstream source at an exact commit
+        id: import
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -43,11 +47,63 @@ jobs:
           import json, os
           from datetime import datetime, timezone
           from pathlib import Path
-          Path('CODESTRA_UPSTREAM_LOCK.json').write_text(json.dumps({'schema_version':'1.0','upstream_clone_url':os.environ['UPSTREAM_URL'],'upstream_ref':os.environ['UPSTREAM_REF'],'upstream_commit':os.environ['UPSTREAM_SHA'],'import_path':'upstream','synchronized_at':datetime.now(timezone.utc).isoformat(),'deployment_enabled':False,'secret_material_allowed_in_git':False},indent=2)+'\n')
+          Path('CODESTRA_UPSTREAM_LOCK.json').write_text(json.dumps({
+              'schema_version':'1.0',
+              'upstream_clone_url':os.environ['UPSTREAM_URL'],
+              'upstream_ref':os.environ['UPSTREAM_REF'],
+              'upstream_commit':os.environ['UPSTREAM_SHA'],
+              'import_path':'upstream',
+              'synchronized_at':datetime.now(timezone.utc).isoformat(),
+              'deployment_enabled':False,
+              'secret_material_allowed_in_git':False,
+          }, indent=2) + '\n')
           PY
+          echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
+          echo "branch=automation/alloy-upstream-${UPSTREAM_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit to a review branch
+        id: commit
+        shell: bash
+        env:
+          BRANCH: ${{ steps.import.outputs.branch }}
+          UPSTREAM_SHA: ${{ steps.import.outputs.upstream_sha }}
+        run: |
+          set -Eeuo pipefail
           git config user.name 'codestra-upstream-sync'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -B "$BRANCH"
           git add -A upstream CODESTRA_UPSTREAM_LOCK.json
-          git diff --cached --quiet && exit 0
+          if git diff --cached --quiet; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git commit -m "vendor: sync official Alloy upstream ${UPSTREAM_SHA}"
-          git push origin HEAD:main
+          git push --force-with-lease origin "$BRANCH"
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+      - name: Open or reuse a reviewable development PR
+        if: steps.commit.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.import.outputs.branch }}
+          UPSTREAM_SHA: ${{ steps.import.outputs.upstream_sha }}
+        run: |
+          set -Eeuo pipefail
+          if gh pr view "$BRANCH" --repo "$GITHUB_REPOSITORY" --json url >/dev/null 2>&1; then
+            gh pr view "$BRANCH" --repo "$GITHUB_REPOSITORY" --json url,number,headRefOid
+          else
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base development \
+              --head "$BRANCH" \
+              --title "vendor(alloy): review official upstream ${UPSTREAM_SHA:0:12}" \
+              --body "Imports the exact official Grafana Alloy commit \`${UPSTREAM_SHA}\` for locked-source validation. Review-only source update; no runtime, deployment, secret, network, or production activation."
+          fi
+
+      - name: Prove protected branches were not updated directly
+        run: |
+          ! git log -1 --pretty=%B | grep -q 'push origin HEAD:main'
+          test "${{ steps.import.outputs.branch }}" != main
+          test "${{ steps.import.outputs.branch }}" != staging
+          test "${{ steps.import.outputs.branch }}" != production

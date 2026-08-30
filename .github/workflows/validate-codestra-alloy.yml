@@ -9,6 +9,8 @@ on:
       - '.github/workflows/validate-codestra-alloy.yml'
       - 'upstream/go.mod'
       - 'upstream/go.sum'
+      - 'upstream/collector/go.mod'
+      - 'upstream/collector/go.sum'
   push:
     branches: [development, test, staging, production, main]
     paths:
@@ -18,6 +20,8 @@ on:
       - '.github/workflows/validate-codestra-alloy.yml'
       - 'upstream/go.mod'
       - 'upstream/go.sum'
+      - 'upstream/collector/go.mod'
+      - 'upstream/collector/go.sum'
 
 permissions:
   contents: read
@@ -74,7 +78,9 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: upstream/go.mod
-          cache-dependency-path: upstream/go.sum
+          cache-dependency-path: |
+            upstream/go.sum
+            upstream/collector/go.sum
 
       - name: Format, vet, and compile native health probe
         run: |
@@ -84,10 +90,10 @@ jobs:
           CGO_ENABLED=0 go build -trimpath -o /tmp/alloy-healthcheck codestra/deploy/healthcheck.go
 
       - name: Build Alloy validator from locked source
-        working-directory: upstream
+        working-directory: upstream/collector
         run: |
-          mkdir -p ../.bin
-          go build -trimpath -o ../.bin/alloy ./cmd/alloy
+          mkdir -p ../../.bin
+          go build -trimpath -o ../../.bin/alloy .
 
       - name: Prepare non-secret validation fixtures
         run: |

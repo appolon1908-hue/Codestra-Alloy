@@ -104,8 +104,8 @@ jobs:
 
       - name: Render hardened Compose candidate
         env:
-          GO_BUILDER_IMAGE_NAME: golang:9.9
-          GO_BUILDER_IMAGE_DIGEST: '0000000000000000000000000000000000000000000000000000000000000000'
+          GO_BUILDER_IMAGE_NAME: grafana/alloy-build-image:v0.1.35
+          GO_BUILDER_IMAGE_DIGEST: '9fa2a341b53503ce42cf9900c401d689a68ea67cdec6a20f53d72e3665fb8dc6'
           ALLOY_BASE_IMAGE_NAME: grafana/alloy:99.0.0
           ALLOY_BASE_IMAGE_DIGEST: '1111111111111111111111111111111111111111111111111111111111111111'
           CODESTRA_ALLOY_IMAGE_NAME: ghcr.io/appolon1908-hue/codestra-alloy:ci
@@ -140,6 +140,10 @@ jobs:
           pattern = re.compile(r'^[^@\s]+@sha256:[0-9a-f]{64}$')
           invalid = {name: value for name, value in references.items() if not pattern.fullmatch(value)}
           assert not invalid, f'mutable or malformed image references: {invalid}'
+          assert references['builder'] == (
+              'grafana/alloy-build-image:v0.1.35@sha256:'
+              '9fa2a341b53503ce42cf9900c401d689a68ea67cdec6a20f53d72e3665fb8dc6'
+          )
           PY
 
       - name: Set up Go from locked Alloy source
@@ -150,6 +154,11 @@ jobs:
             upstream/go.sum
             upstream/collector/go.sum
 
+      - name: Install journal-capable build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends gcc libsystemd-dev pkg-config
+
       - name: Format, vet, and compile native health probe
         run: |
           gofmt -w codestra/deploy/healthcheck.go
@@ -157,12 +166,27 @@ jobs:
           go vet codestra/deploy/healthcheck.go
           CGO_ENABLED=0 go build -buildvcs=false -trimpath -o /tmp/alloy-healthcheck codestra/deploy/healthcheck.go
 
-      - name: Build exact source-bound Alloy executable
-        working-directory: upstream/collector
+      - name: Build exact source-bound Alloy executable with journal support
+        working-directory: upstream
         run: |
-          mkdir -p ../../.bin
-          CGO_ENABLED=0 go build -buildvcs=false -trimpath -o ../../.bin/alloy .
+          set -Eeuo pipefail
+          journal_files="$(CGO_ENABLED=1 go list \
+            -tags='promtail_journal_enabled' \
+            -f '{{join .GoFiles " "}} {{join .CgoFiles " "}}' \
+            ./internal/component/loki/source/journal)"
+          grep -Eq '(^|[[:space:]])journal\.go([[:space:]]|$)' <<<"$journal_files"
+          ! grep -Eq '(^|[[:space:]])journal_stub\.go([[:space:]]|$)' <<<"$journal_files"
+
+          mkdir -p ../.bin
+          cd collector
+          CGO_ENABLED=1 go build \
+            -buildvcs=false \
+            -trimpath \
+            -tags='promtail_journal_enabled' \
+            -o ../../.bin/alloy \
+            .
           test -x ../../.bin/alloy
+          ldd ../../.bin/alloy | grep -q 'libsystemd'
 
       - name: Prepare non-secret validation fixtures
         run: |
@@ -204,4 +228,6 @@ jobs:
           assert runtime['activation'] and all(value is False for value in runtime['activation'].values())
           assert image['activation'] and all(value is False for value in image['activation'].values())
           assert image['finalImage']['digest'] is None
+          assert image['runtimeExecutable']['cgoEnabled'] is True
+          assert image['runtimeExecutable']['buildTags'] == ['promtail_journal_enabled']
           PY

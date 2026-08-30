@@ -3,8 +3,12 @@
   "status": "COLLECTION_CONTRACT_PREPARED_NOT_DEPLOYED",
   "domain": "codestra-marketing-platform",
   "services": ["kong","keycloak","middleware","marketing","ai","communication","social-control","social-runtime","n8n","odoo"],
-  "inputs": ["application-otel","container-logs","host-metrics"],
-  "outputs": ["prometheus","loki","tempo"],
+  "inputs": ["container-logs"],
+  "externallyOwnedRoutes": {
+    "application-otel": "Codestra-Telemetry/OpenTelemetry Collector",
+    "host-metrics": "Codestra-Node-Exporter"
+  },
+  "outputs": ["loki"],
   "requirements": {"businessIsolation": true,"redaction": true,"backpressure": true,"walOrDurableBuffering": true,"dockerSocketAccess": false,"embeddedSecrets": false},
   "activation": {"runtimeApplied": false,"forwardingEnabled": false,"productionEnabled": false}
 }

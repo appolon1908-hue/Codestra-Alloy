@@ -121,7 +121,8 @@ jobs:
           CODESTRA_ALLOY_DEPLOYMENT_ID: exact-head-ci
           LOKI_PUSH_URL: https://loki-ingest.internal/loki/api/v1/push
         run: |
-          .bin/alloy fmt --test codestra/config.alloy
+          .bin/alloy fmt --write codestra/config.alloy
+          git diff --exit-code -- codestra/config.alloy
           .bin/alloy validate codestra/config.alloy
 
       - name: Confirm source-only safety state

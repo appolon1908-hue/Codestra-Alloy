@@ -132,9 +132,39 @@ loki.process "redact" {
 		drop_counter_reason = "line_too_long"
 	}
 
+	// PEM markers and body lines are independent log entries in ordinary file
+	// output. Drop both markers plus long or padded base64-only lines so a key
+	// cannot leak merely because it was split across multiple records.
 	stage.drop {
 		expression          = `(?i)-----BEGIN (?:OPENSSH |RSA |EC |DSA )?PRIVATE KEY-----`
 		drop_counter_reason = "private_key_material"
+	}
+
+	stage.drop {
+		expression          = `(?i)-----END (?:OPENSSH |RSA |EC |DSA )?PRIVATE KEY-----`
+		drop_counter_reason = "private_key_material"
+	}
+
+	stage.drop {
+		expression          = `(?i)^\s*(?:[A-Za-z0-9+/]{16,}={0,2}|[A-Za-z0-9+/]{4,}={1,2})\s*$`
+		drop_counter_reason = "pem_or_base64_material"
+	}
+
+	// Intake applications must emit sanitized operational events. Any intake
+	// record that still carries a forbidden form, survey, contact, campaign, or
+	// correlation payload is rejected as a whole before the Loki write stage.
+	stage.match {
+		selector = `{service=~"middleware-intake|intake-workers|odoo-intake-adapter"}`
+
+		stage.drop {
+			expression          = `(?i)"(?:tenant_id|site_id|campaign_id|form_id|survey_id|question_id|customer_id|contact_id|lead_id|response_id|account_id|user_id|email|phone|name|address|message|transcript|answers|custom_fields|consent_text|request_id|correlation_id|trace_id|span_id|idempotency_key|raw_url|query_string|referrer|landing_page|utm_source|utm_medium|utm_campaign|utm_term|utm_content)"\s*:`
+			drop_counter_reason = "intake_sensitive_payload"
+		}
+
+		stage.drop {
+			expression          = `(?i)\b(?:tenant_id|site_id|campaign_id|form_id|survey_id|question_id|customer_id|contact_id|lead_id|response_id|account_id|user_id|email|phone|name|address|message|transcript|answers|custom_fields|consent_text|request_id|correlation_id|trace_id|span_id|idempotency_key|raw_url|query_string|referrer|landing_page|utm_source|utm_medium|utm_campaign|utm_term|utm_content)\s*[=:]`
+			drop_counter_reason = "intake_sensitive_payload"
+		}
 	}
 
 	stage.replace {
@@ -160,11 +190,6 @@ loki.process "redact" {
 	stage.replace {
 		expression = `(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}`
 		replace    = "[REDACTED_EMAIL]"
-	}
-
-	stage.replace {
-		expression = `(?i)-----END (?:OPENSSH |RSA |EC |DSA )?PRIVATE KEY-----`
-		replace    = "[REDACTED_PRIVATE_KEY_MARKER]"
 	}
 
 	forward_to = [loki.write.codestra.receiver]

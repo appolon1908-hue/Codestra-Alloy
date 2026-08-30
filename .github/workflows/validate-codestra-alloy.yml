@@ -85,7 +85,9 @@ jobs:
 
       - name: Build Alloy validator from locked source
         working-directory: upstream
-        run: go build -trimpath -o ../.bin/alloy ./cmd/alloy
+        run: |
+          mkdir -p ../.bin
+          go build -trimpath -o ../.bin/alloy ./cmd/alloy
 
       - name: Prepare non-secret validation fixtures
         run: |

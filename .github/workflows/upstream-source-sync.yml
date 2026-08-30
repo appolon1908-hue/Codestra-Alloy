@@ -34,34 +34,123 @@ jobs:
           PY
           )
           UPSTREAM_URL="${values[0]}"; UPSTREAM_REF="${values[1]}"; IMPORT_PATH="${values[2]}"
+          SANITIZED_PATH='integration-tests/docker/tests/loki-azure-event-hubs/certs'
           [[ "$UPSTREAM_URL" == "https://github.com/grafana/alloy.git" ]]
           [[ "$UPSTREAM_REF" == "main" ]]
           [[ "$IMPORT_PATH" == "upstream" ]]
           rm -rf .codestra-upstream-src "$IMPORT_PATH"
           GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch "$UPSTREAM_REF" "$UPSTREAM_URL" .codestra-upstream-src
           UPSTREAM_SHA="$(git -C .codestra-upstream-src rev-parse HEAD)"
+          OFFICIAL_TREE_SHA="$(git -C .codestra-upstream-src rev-parse 'HEAD^{tree}')"
+
+          # Keep official product/runtime source byte-for-byte. Only the named
+          # upstream integration-test certificate/private-key fixture directory
+          # is excluded from the Codestra parent repository and push protection.
+          test -d ".codestra-upstream-src/${SANITIZED_PATH}"
+          git -C .codestra-upstream-src rm -r --cached --ignore-unmatch -- "$SANITIZED_PATH"
+          rm -rf ".codestra-upstream-src/${SANITIZED_PATH}"
+          IMPORTED_TREE_SHA="$(git -C .codestra-upstream-src write-tree)"
+
           rm -rf .codestra-upstream-src/.git
           mv .codestra-upstream-src "$IMPORT_PATH"
-          export UPSTREAM_URL UPSTREAM_REF UPSTREAM_SHA
+          export UPSTREAM_URL UPSTREAM_REF UPSTREAM_SHA OFFICIAL_TREE_SHA IMPORTED_TREE_SHA SANITIZED_PATH
           python3 - <<'PY'
           import json, os
           from datetime import datetime, timezone
           from pathlib import Path
-          Path('CODESTRA_UPSTREAM_LOCK.json').write_text(json.dumps({
-              'schema_version':'1.0',
+
+          reason = (
+              'Official upstream integration-test certificate and private-key fixtures remain '
+              'excluded from the Codestra parent repository and GitHub push-protection scope. '
+              'No runtime or product source is modified.'
+          )
+          lock = {
+              'schema_version':'1.1',
               'upstream_clone_url':os.environ['UPSTREAM_URL'],
               'upstream_ref':os.environ['UPSTREAM_REF'],
               'upstream_commit':os.environ['UPSTREAM_SHA'],
+              'official_tree_sha':os.environ['OFFICIAL_TREE_SHA'],
               'import_path':'upstream',
+              'imported_tree_sha':os.environ['IMPORTED_TREE_SHA'],
+              'sanitization':{
+                  'mode':'remove-explicit-upstream-test-fixtures',
+                  'removed_paths':[os.environ['SANITIZED_PATH']],
+                  'reason':reason,
+              },
               'synchronized_at':datetime.now(timezone.utc).isoformat(),
+              'source_tree_verification_required':True,
               'deployment_enabled':False,
               'secret_material_allowed_in_git':False,
-          }, indent=2) + '\n')
+          }
+          Path('CODESTRA_UPSTREAM_LOCK.json').write_text(json.dumps(lock, indent=2) + '\n')
+
+          source_image = {
+              'schemaVersion':'1.0',
+              'status':'SOURCE_BOUND_BUILD_CONTRACT_PREPARED_NOT_RELEASED',
+              'sourceAuthority':{
+                  'repository':os.environ['UPSTREAM_URL'],
+                  'upstreamCommit':os.environ['UPSTREAM_SHA'],
+                  'officialTreeSha':os.environ['OFFICIAL_TREE_SHA'],
+                  'importedTreeSha':os.environ['IMPORTED_TREE_SHA'],
+                  'sanitizedPaths':[os.environ['SANITIZED_PATH']],
+              },
+              'builder':{
+                  'image':'grafana/alloy-build-image:v0.1.35',
+                  'digest':'9fa2a341b53503ce42cf9900c401d689a68ea67cdec6a20f53d72e3665fb8dc6',
+                  'cgoToolchainRequired':True,
+                  'systemdDevelopmentFilesRequired':True,
+              },
+              'runtimeExecutable':{
+                  'buildContext':'upstream/collector',
+                  'outputPath':'/bin/alloy',
+                  'builtFromImportedTree':True,
+                  'cgoEnabled':True,
+                  'buildTags':['promtail_journal_enabled'],
+                  'systemdJournalImplementation':'enabled',
+                  'inheritedBaseImageExecutableAllowed':False,
+                  'embeddedSourceLockPath':'/usr/share/codestra/CODESTRA_UPSTREAM_LOCK.json',
+              },
+              'runtimeBaseImage':{
+                  'role':'runtime-substrate-only',
+                  'digestRequired':True,
+                  'sourceAuthority':False,
+              },
+              'finalImage':{
+                  'repository':'ghcr.io/appolon1908-hue/codestra-alloy',
+                  'digest':None,
+                  'digestMustBeRecordedBeforeDeployment':True,
+                  'provenanceMustReferenceImportedTree':True,
+                  'sbomRequired':True,
+                  'signatureRequired':True,
+              },
+              'activation':{
+                  'imageBuilt':False,
+                  'immutableDigestRecorded':False,
+                  'sourceProvenanceVerified':False,
+                  'sbomAttached':False,
+                  'signatureVerified':False,
+                  'deploymentEnabled':False,
+              },
+          }
+          Path('codestra/source-image-contract.v1.json').write_text(
+              json.dumps(source_image, indent=2) + '\n'
+          )
           PY
           echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
+          echo "official_tree_sha=${OFFICIAL_TREE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "imported_tree_sha=${IMPORTED_TREE_SHA}" >> "$GITHUB_OUTPUT"
           echo "branch=automation/alloy-upstream-${UPSTREAM_SHA:0:12}" >> "$GITHUB_OUTPUT"
 
-      - name: Commit to a review branch
+      - name: Verify imported tree before local commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          expected="${{ steps.import.outputs.imported_tree_sha }}"
+          actual="$(git add -A upstream && git write-tree | xargs -I{} git ls-tree {} upstream | awk '{print $3}')"
+          test -n "$actual"
+          test "$actual" = "$expected"
+
+      - name: Commit, validate, and push a review branch
         id: commit
         shell: bash
         env:
@@ -72,12 +161,13 @@ jobs:
           git config user.name 'codestra-upstream-sync'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git checkout -B "$BRANCH"
-          git add -A upstream CODESTRA_UPSTREAM_LOCK.json
+          git add -A upstream CODESTRA_UPSTREAM_LOCK.json codestra/source-image-contract.v1.json
           if git diff --cached --quiet; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git commit -m "vendor: sync official Alloy upstream ${UPSTREAM_SHA}"
+          python3 scripts/validate_codestra_alloy_staging_review.py
           git push --force-with-lease origin "$BRANCH"
           echo 'changed=true' >> "$GITHUB_OUTPUT"
 
@@ -98,7 +188,7 @@ jobs:
               --base development \
               --head "$BRANCH" \
               --title "vendor(alloy): review official upstream ${UPSTREAM_SHA:0:12}" \
-              --body "Imports the exact official Grafana Alloy commit \`${UPSTREAM_SHA}\` for locked-source validation. Review-only source update; no runtime, deployment, secret, network, or production activation."
+              --body "Imports the exact official Grafana Alloy commit \`${UPSTREAM_SHA}\`, proves its official tree, removes only the declared upstream test-certificate fixture path, records the deterministic imported tree, and regenerates the source-bound image contract. Review-only source update; no runtime, deployment, secret, network, or production activation."
           fi
 
       - name: Prove protected branches were not updated directly

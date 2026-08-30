@@ -11,8 +11,10 @@ actual Alloy syntax correctly.
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
+from pathlib import Path
 from types import ModuleType
 
 
@@ -92,16 +94,11 @@ def validate_alloy_config(module: ModuleType) -> None:
             module.fail(f"Alloy config does not assign required stream label: {label}")
 
     lowered = text.lower()
-    # Alloy regex literals escape dots in structured names. Compare against a
-    # normalized policy view so `db\.statement` proves `db.statement` coverage
-    # without weakening the required redaction catalogue.
     normalized_policy = lowered.replace(r"\.", ".")
     for token in module.REQUIRED_REDACTION_TOKENS:
         if token.lower() not in normalized_policy:
             module.fail(f"Alloy redaction policy omits token class: {token}")
 
-    # Parse only the nested values maps. This prevents `values` from being
-    # mistaken for a stream label while still failing on any additional label.
     stage_label_blocks = re.findall(
         r"stage\.labels\s*\{\s*values\s*=\s*\{(.*?)\}\s*\}",
         text,
@@ -129,6 +126,55 @@ def validate_alloy_config(module: ModuleType) -> None:
         )
 
 
+def validate_marketing_platform_collection_contract() -> None:
+    path = Path("codestra/marketing-platform-collection.v1.json")
+    if not path.is_file():
+        fail("marketing-platform collection contract is missing")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        fail(f"marketing-platform collection contract is invalid: {error}")
+
+    if document.get("status") != "COLLECTION_CONTRACT_PREPARED_NOT_DEPLOYED":
+        fail("marketing-platform collection contract status must remain source-only")
+    if document.get("inputs") != ["container-logs"]:
+        fail("Alloy marketing-platform inputs must remain limited to container-logs")
+    expected_external = {
+        "application-otel": "Codestra-Telemetry/OpenTelemetry Collector",
+        "host-metrics": "Codestra-Node-Exporter",
+    }
+    if document.get("externallyOwnedRoutes") != expected_external:
+        fail("marketing-platform external telemetry ownership does not match authority")
+    if document.get("outputs") != ["loki"]:
+        fail("Alloy marketing-platform output must remain Loki-only")
+
+    requirements = document.get("requirements")
+    if not isinstance(requirements, dict):
+        fail("marketing-platform collection requirements must be an object")
+    required_true = {
+        "businessIsolation",
+        "redaction",
+        "backpressure",
+        "walOrDurableBuffering",
+    }
+    for key in required_true:
+        if requirements.get(key) is not True:
+            fail(f"marketing-platform requirement must be true: {key}")
+    if requirements.get("dockerSocketAccess") is not False:
+        fail("marketing-platform collection must not access the Docker socket")
+    if requirements.get("embeddedSecrets") is not False:
+        fail("marketing-platform collection must not embed secrets")
+
+    activation = document.get("activation")
+    expected_activation = {
+        "runtimeApplied": False,
+        "forwardingEnabled": False,
+        "productionEnabled": False,
+    }
+    if activation != expected_activation:
+        fail("marketing-platform activation keys must exactly match the fail-closed set")
+
+
 def main() -> None:
     module = load_validator()
     module.validate_runtime()
@@ -136,6 +182,7 @@ def main() -> None:
     module.validate_compose()
     module.validate_packaging_and_docs()
     module.validate_secret_safety()
+    validate_marketing_platform_collection_contract()
     print("Codestra Alloy corporate agent validation PASS")
 
 

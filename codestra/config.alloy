@@ -187,6 +187,20 @@ loki.process "redact" {
 		replace    = "$1[REDACTED]$2"
 	}
 
+	// JSON identifiers and secret fields are not always strings. Replace
+	// numeric, boolean, and null scalars while preserving valid JSON delimiters.
+	stage.replace {
+		expression = `(?i)("(?:authorization|proxy_authorization|cookie|set-cookie|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret)|tenant_id|tenant_name|organization_id|organization_name|customer_id|customer_name|account_id|user_id|user_name|email|phone|message_id|order_id|workflow_id|execution_id|request\.body|response\.body|http\.request\.body|http\.response\.body|db\.statement)"\s*:\s*)(?:-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false|null)(\s*[,}])`
+		replace    = `$1"[REDACTED]"$2`
+	}
+
+	// Nested arrays or objects cannot be safely sanitized with a line-oriented
+	// regex. Reject the complete record instead of forwarding partial payloads.
+	stage.drop {
+		expression          = `(?i)"(?:authorization|proxy_authorization|cookie|set-cookie|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret)|tenant_id|tenant_name|organization_id|organization_name|customer_id|customer_name|account_id|user_id|user_name|email|phone|message_id|order_id|workflow_id|execution_id|request\.body|response\.body|http\.request\.body|http\.response\.body|db\.statement)"\s*:\s*[\[{]`
+		drop_counter_reason = "complex_sensitive_json_value"
+	}
+
 	stage.replace {
 		expression = `(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}`
 		replace    = "[REDACTED_EMAIL]"

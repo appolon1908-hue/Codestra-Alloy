@@ -141,7 +141,7 @@ jobs:
           echo "imported_tree_sha=${IMPORTED_TREE_SHA}" >> "$GITHUB_OUTPUT"
           echo "branch=automation/alloy-upstream-${UPSTREAM_SHA:0:12}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify imported tree before review publication
+      - name: Verify imported tree before local commit
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -149,9 +149,8 @@ jobs:
           actual="$(git add -A upstream && git write-tree | xargs -I{} git ls-tree {} upstream | awk '{print $3}')"
           test -n "$actual"
           test "$actual" = "$expected"
-          python3 scripts/validate_codestra_alloy_staging_review.py
 
-      - name: Commit to a review branch
+      - name: Commit, validate, and push a review branch
         id: commit
         shell: bash
         env:
@@ -168,6 +167,7 @@ jobs:
             exit 0
           fi
           git commit -m "vendor: sync official Alloy upstream ${UPSTREAM_SHA}"
+          python3 scripts/validate_codestra_alloy_staging_review.py
           git push --force-with-lease origin "$BRANCH"
           echo 'changed=true' >> "$GITHUB_OUTPUT"
 

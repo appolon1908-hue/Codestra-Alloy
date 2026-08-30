@@ -157,7 +157,7 @@ jobs:
       - name: Install journal-capable build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends gcc libsystemd-dev pkg-config
+          sudo apt-get install --yes --no-install-recommends binutils gcc libsystemd-dev pkg-config
 
       - name: Format, vet, and compile native health probe
         run: |
@@ -167,18 +167,10 @@ jobs:
           CGO_ENABLED=0 go build -buildvcs=false -trimpath -o /tmp/alloy-healthcheck codestra/deploy/healthcheck.go
 
       - name: Build exact source-bound Alloy executable with journal support
-        working-directory: upstream
+        working-directory: upstream/collector
         run: |
           set -Eeuo pipefail
-          journal_files="$(CGO_ENABLED=1 go list \
-            -tags='promtail_journal_enabled' \
-            -f '{{join .GoFiles " "}} {{join .CgoFiles " "}}' \
-            ./internal/component/loki/source/journal)"
-          grep -Eq '(^|[[:space:]])journal\.go([[:space:]]|$)' <<<"$journal_files"
-          ! grep -Eq '(^|[[:space:]])journal_stub\.go([[:space:]]|$)' <<<"$journal_files"
-
-          mkdir -p ../.bin
-          cd collector
+          mkdir -p ../../.bin
           CGO_ENABLED=1 go build \
             -buildvcs=false \
             -trimpath \
@@ -187,6 +179,7 @@ jobs:
             .
           test -x ../../.bin/alloy
           ldd ../../.bin/alloy | grep -q 'libsystemd'
+          ! strings ../../.bin/alloy | grep -Fq 'loki.source.journal is not enabled'
 
       - name: Prepare non-secret validation fixtures
         run: |

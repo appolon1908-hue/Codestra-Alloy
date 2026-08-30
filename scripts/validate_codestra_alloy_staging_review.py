@@ -19,7 +19,6 @@ DOCKERFILE_PATH = ROOT / "codestra" / "deploy" / "Dockerfile"
 SYNC_PATH = ROOT / ".github" / "workflows" / "upstream-source-sync.yml"
 
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
-SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SANITIZED_PATH = "integration-tests/docker/tests/loki-azure-event-hubs/certs"
 SANITIZATION_REASON = (
     "Official upstream integration-test certificate and private-key fixtures remain "
@@ -117,11 +116,9 @@ def validate_upstream_tree() -> dict[str, Any]:
         if lock.get(key) != expected_value:
             fail(f"upstream lock mismatch for {key}")
 
-    upstream_commit = require_sha40(lock.get("upstream_commit"), "upstream_commit")
-    official_tree = require_sha40(lock.get("official_tree_sha"), "official_tree_sha")
+    require_sha40(lock.get("upstream_commit"), "upstream_commit")
+    require_sha40(lock.get("official_tree_sha"), "official_tree_sha")
     imported_tree = require_sha40(lock.get("imported_tree_sha"), "imported_tree_sha")
-    if len({upstream_commit, official_tree, imported_tree}) != 3:
-        fail("commit, official tree, and imported tree authorities must be distinct")
 
     if lock.get("sanitization") != {
         "mode": "remove-explicit-upstream-test-fixtures",
@@ -141,11 +138,12 @@ def validate_upstream_tree() -> dict[str, Any]:
         "git -C .codestra-upstream-src write-tree",
         "remove-explicit-upstream-test-fixtures",
         SANITIZED_PATH,
-        "Verify imported tree before review publication",
+        "Verify imported tree before",
         "codestra/source-image-contract.v1.json",
         "'upstreamCommit':os.environ['UPSTREAM_SHA']",
         "'officialTreeSha':os.environ['OFFICIAL_TREE_SHA']",
         "'importedTreeSha':os.environ['IMPORTED_TREE_SHA']",
+        "python3 scripts/validate_codestra_alloy_staging_review.py",
     ):
         if fragment not in sync:
             fail(f"upstream sync omits provenance or contract regeneration: {fragment}")

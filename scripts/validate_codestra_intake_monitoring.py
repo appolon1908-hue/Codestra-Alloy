@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "codestra" / "intake-monitoring.v1.json"
+CONFIG = ROOT / "codestra" / "config.alloy"
 
 REQUIRED_EVENTS = {
     "codestra.events.lead_submitted",
@@ -30,6 +31,8 @@ REQUIRED_SAFE_DIMENSIONS = {
     "anonymous",
 }
 REQUIRED_FORBIDDEN = {
+    "tenant_id",
+    "site_id",
     "campaign_id",
     "form_id",
     "survey_id",
@@ -38,8 +41,12 @@ REQUIRED_FORBIDDEN = {
     "contact_id",
     "lead_id",
     "response_id",
+    "account_id",
+    "user_id",
     "email",
     "phone",
+    "name",
+    "address",
     "message",
     "transcript",
     "answers",
@@ -50,6 +57,15 @@ REQUIRED_FORBIDDEN = {
     "trace_id",
     "span_id",
     "idempotency_key",
+    "raw_url",
+    "query_string",
+    "referrer",
+    "landing_page",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
 }
 REQUIRED_SOURCES = {
     "middleware-intake",
@@ -81,8 +97,8 @@ def main() -> None:
     forbidden = set(data.get("forbiddenLabelsOrPayloads", []))
     if safe != REQUIRED_SAFE_DIMENSIONS:
         fail("Alloy intake safe dimensions do not match the corporate contract")
-    if not REQUIRED_FORBIDDEN.issubset(forbidden):
-        fail("Alloy intake contract omits protected fields")
+    if forbidden != REQUIRED_FORBIDDEN:
+        fail("Alloy intake forbidden payload catalogue mismatch")
     if safe & forbidden:
         fail("an intake field cannot be both safe and forbidden")
 
@@ -107,12 +123,33 @@ def main() -> None:
         fail("Alloy intake source allowlist mismatch")
     if features.get("eventFamily") != "intake":
         fail("Alloy intake event family mismatch")
-    if features.get("dropPrivateKeyMaterial") is not True:
-        fail("private-key material must be dropped")
-    if features.get("replaceFormAndSurveyContent") is not True:
-        fail("form and survey content must be replaced before Loki write")
+    for field in (
+        "dropPrivateKeyMaterial",
+        "replaceFormAndSurveyContent",
+        "dropSensitivePayloadLines",
+    ):
+        if features.get(field) is not True:
+            fail(f"required intake privacy feature is disabled: {field}")
     if features.get("crossBusinessCollection") is not False:
         fail("cross-business intake collection must remain denied")
+
+    config = CONFIG.read_text(encoding="utf-8")
+    normalized = config.lower().replace(r"\.", ".")
+    for source in REQUIRED_SOURCES:
+        if source not in normalized:
+            fail(f"Alloy intake selector omits accepted source: {source}")
+    if normalized.count('drop_counter_reason = "intake_sensitive_payload"') < 2:
+        fail("structured and unstructured intake payload drops are both required")
+    for field in REQUIRED_FORBIDDEN:
+        if field not in normalized:
+            fail(f"Alloy intake redaction policy omits forbidden field: {field}")
+    for fragment in (
+        "-----begin (?:openssh |rsa |ec |dsa )?private key-----",
+        "-----end (?:openssh |rsa |ec |dsa )?private key-----",
+        'drop_counter_reason = "pem_or_base64_material"',
+    ):
+        if fragment not in normalized:
+            fail(f"Alloy private-key suppression omits: {fragment}")
 
     serialized = CONTRACT.read_text(encoding="utf-8").lower()
     for secret_shape in ("-----begin private key-----", "bearer ", "password=", "api_key="):

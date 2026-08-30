@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "1.0",
+  "component": "grafana-alloy",
+  "role": "host-and-container-telemetry-agent",
+  "canonicalHostname": "allo.codestra.media",
+  "exposure": "internal_private",
+  "status": "SOURCE_PREPARED_NOT_DEPLOYED",
+  "businessScope": ["codestra", "moneybee", "beyvra", "breero", "larim-a", "transportation", "booked4seasons", "social", "klyrow", "telnexa", "kyqra", "restaurant", "provisioning"],
+  "serverProfiles": ["edge", "gateway", "identity", "middleware", "application", "database", "provider", "contact-center", "observability"],
+  "collect": ["system_logs", "docker_logs", "prometheus_metrics", "otlp_telemetry", "host_metadata"],
+  "normalize": ["codestra_business", "application", "service", "environment", "server", "region", "deployment"],
+  "features": {
+    "reusableServerProfiles": true,
+    "centralRelabeling": true,
+    "piiAndSecretRedaction": true,
+    "localBuffering": true,
+    "backpressureVisibility": true,
+    "selfMonitoring": true,
+    "privateRemoteWrite": true,
+    "deploymentMetadata": true
+  },
+  "destinations": ["prometheus", "loki", "opentelemetry"],
+  "security": {
+    "nativeAdminEndpointPublic": false,
+    "secretMaterialInGit": false,
+    "runtimeCredentialsFromOpenBaoOrSecretFiles": true
+  }
+}

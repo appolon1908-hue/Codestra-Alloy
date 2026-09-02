@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "1.0",
+  "component": "grafana-alloy",
+  "role": "business-scoped-host-and-service-log-collection-agent",
+  "canonicalHostname": "allo.codestra.media",
+  "exposure": "internal_private",
+  "status": "SOURCE_PREPARED_NOT_DEPLOYED",
+  "businessScope": [
+    "codestra",
+    "moneybee",
+    "beyvra",
+    "breero",
+    "larim-a",
+    "transportation",
+    "booked4seasons",
+    "social",
+    "klyrow",
+    "telnexa",
+    "kyqra",
+    "restaurant",
+    "provisioning"
+  ],
+  "serverProfiles": [
+    "edge",
+    "gateway",
+    "identity",
+    "middleware",
+    "application",
+    "database",
+    "provider",
+    "contact-center",
+    "observability"
+  ],
+  "collect": [
+    "service_file_logs",
+    "explicit_container_json_logs",
+    "approved_systemd_journal_logs",
+    "alloy_self_metrics"
+  ],
+  "normalize": [
+    "codestra_business",
+    "application",
+    "service",
+    "environment",
+    "server",
+    "region",
+    "deployment"
+  ],
+  "features": {
+    "reusableServerProfiles": true,
+    "logLabelNormalization": true,
+    "piiAndSecretRedaction": true,
+    "localWalBuffering": true,
+    "backpressureVisibility": true,
+    "selfMonitoring": true,
+    "privateLokiWrite": true,
+    "deploymentMetadata": true,
+    "prometheusMetricCollection": false,
+    "applicationOtlpReceiver": false,
+    "hostMetricCollection": false,
+    "containerMetricCollection": false
+  },
+  "destinations": [
+    "loki"
+  ],
+  "externallyOwnedCapabilities": {
+    "application_otlp": "Codestra-Telemetry",
+    "host_metrics": "Codestra-Node-Exporter",
+    "container_metrics": "Codestra-cAdvisor",
+    "metrics_storage_slo_and_alert_evaluation": "Codestra-Prometheus"
+  },
+  "security": {
+    "nativeAdminEndpointPublic": false,
+    "secretMaterialInGit": false,
+    "runtimeCredentialsFromOpenBaoOrSecretFiles": true
+  }
+}

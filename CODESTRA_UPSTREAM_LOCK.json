@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.1",
+  "upstream_clone_url": "https://github.com/grafana/alloy.git",
+  "upstream_ref": "main",
+  "upstream_commit": "041d2911a30a53f2c9c0317333aedee108a56b0a",
+  "official_tree_sha": "68383917509d3a72fb70a9fe94368e036d343b46",
+  "import_path": "upstream",
+  "imported_tree_sha": "5f272c47f1954ee0b9bffce262d96483883f4b3b",
+  "sanitization": {
+    "mode": "remove-explicit-upstream-test-fixtures",
+    "removed_paths": [
+      "integration-tests/docker/tests/loki-azure-event-hubs/certs"
+    ],
+    "reason": "Official upstream integration-test certificate and private-key fixtures remain excluded from the Codestra parent repository and GitHub push-protection scope. No runtime or product source is modified."
+  },
+  "synchronized_at": "2026-08-29T18:15:16.661080+00:00",
+  "source_tree_verification_required": true,
+  "deployment_enabled": false,
+  "secret_material_allowed_in_git": false
+}

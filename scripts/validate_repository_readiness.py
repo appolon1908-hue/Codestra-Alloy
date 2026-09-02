@@ -7,7 +7,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = re.compile(r"^[a-z0-9./_-]+@sha256:[0-9a-f]{64}$")
 AUTHORITY = "appolon1908-hue/Codestra-Telemetry/.github/workflows/reusable-release-image.yml@9a6aebb849bbc068105c10d9d1dfd39ebf6f78bd"
-REQUIRED = ("REPOSITORY_PROFILE.md","SECURITY.md",".github/CODEOWNERS","docs/BACKUP_RESTORE_ROLLBACK.md","docs/UPGRADE.md",".dockerignore",".gitleaks.toml","codestra/release/image-build.v1.json","codestra/release/runtime-base.lock.json",".github/workflows/release-image.yml","requirements-validation.txt")
+REQUIRED = ("REPOSITORY_PROFILE.md","SECURITY.md",".github/CODEOWNERS","docs/BACKUP_RESTORE_ROLLBACK.md","docs/UPGRADE.md",".dockerignore",".gitleaks.toml","codestra/release/image-build.v1.json","codestra/release/runtime-base.lock.json",".github/workflows/release-image.yml","scripts/build_and_inspect_locked_image.sh","requirements-validation.txt")
 def fail(message: str) -> None: raise SystemExit(f"ERROR: {message}")
 def load(path: str) -> dict:
     value=json.loads((ROOT/path).read_text())
@@ -37,6 +37,9 @@ def validate() -> None:
     if "useDefault = true" not in allowlist or "Official upstream documentation" not in allowlist: fail("secret-scan allowlist authority missing")
     release=yaml.safe_load((ROOT/".github/workflows/release-image.yml").read_text()); job=release.get("jobs",{}).get("release",{})
     if job.get("uses")!=AUTHORITY or job.get("with",{}).get("image_id")!="alloy": fail("release authority mismatch")
+    build_call='bash scripts/build_and_inspect_locked_image.sh "$GITHUB_SHA"'
+    for relative in (".github/workflows/validate-repository-readiness.yml", ".github/workflows/validate-repository-readiness-protected.yml"):
+        if build_call not in (ROOT/relative).read_text(): fail(f"merge/protected image build missing: {relative}")
     compose=yaml.safe_load((ROOT/"codestra/deploy/compose.candidate.yaml").read_text()); service=compose.get("services",{}).get("alloy",{})
     if service.get("privileged") is True or service.get("network_mode")=="host" or service.get("pid")=="host" or service.get("ports"): fail("unsafe Alloy runtime boundary")
     for workflow in (ROOT/".github/workflows").glob("*.yml"):

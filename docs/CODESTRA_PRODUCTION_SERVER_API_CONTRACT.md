@@ -13,12 +13,18 @@ Alloy owns explicit log-root collection, approved journal collection, redaction,
 
 ## Native API surface
 
-| Method | Path | Purpose | Boundary |
-|---|---|---|---|
-| `GET` | `/-/ready` | readiness | private/read-only |
-| `GET` | `/metrics` | Alloy self-metrics | private Prometheus scrape |
+The upstream Alloy listener registers more than readiness and metrics. Production certification must inventory and constrain the complete enabled surface:
 
-Alloy does not expose a business API. Unexpected `404` on required routes, unexpected `5xx`, a public native port, or an unsupported journal stub blocks production.
+| Method | Path | Purpose | Production boundary |
+|---|---|---|---|
+| `GET` | `/-/ready` | readiness | private approved health client only |
+| `GET` | `/metrics` | Alloy self-metrics | private approved Prometheus client only |
+| `GET`, `POST` | `/-/reload` | runtime configuration reload | forbidden from attached network peers; use immutable reviewed redeploy |
+| `GET` | `/-/support` | support-bundle access | disabled with the supported flag or denied by a reviewed authenticated proxy/network boundary |
+
+Alloy does not expose a business API. The native listener must not be generally reachable merely because a caller is attached to `codestra-business-logs` or `codestra-observability`. A production deployment that exposes unauthenticated reload or support-bundle access is blocked, even when readiness and metrics pass.
+
+Unexpected `404` on required readiness/metrics routes, unexpected `5xx`, a public native port, an unsupported journal stub, or peer access to reload/support blocks production. A denied administrative route may be absent at the approved proxy, return `401`/`403`, or be unreachable by network policy; a direct successful native response is forbidden.
 
 ## Collection and security boundary
 
@@ -28,6 +34,7 @@ Alloy does not expose a business API. Unexpected `404` on required routes, unexp
 - `codestra_business` comes from deployment configuration; callers cannot override it.
 - Redact string, numeric, boolean, and null sensitive values; reject nested sensitive arrays/objects when they cannot be safely sanitized.
 - Loki forwarding requires mTLS, CA verification, tenant binding, bounded retry, WAL recovery, and queue/backpressure evidence.
+- The production HTTP boundary exposes only approved readiness and self-metric access. HTTP reload is replaced by immutable repository-controlled rollout; support bundles are disabled or privileged and audited.
 - No host, container, OTLP, business-write, communications, identity, secrets, or financial authority is implied.
 
 ## Production gates
@@ -41,6 +48,10 @@ JOURNAL_CAPABLE_BUILD=PASS
 REDACTION_FIXTURES=PASS
 EXPLICIT_LOG_ROOTS=PASS
 DOCKER_SOCKET_MOUNTED=NO
+NATIVE_HTTP_ROUTE_INVENTORY=PASS
+HTTP_RELOAD_FROM_NETWORK_PEER=DENIED
+SUPPORT_BUNDLE_FROM_NETWORK_PEER=DENIED
+SUPPORT_BUNDLE_DISABLED_OR_AUTHORIZED_PROXY=PASS
 IMMUTABLE_IMAGE_DIGEST=PASS
 IMAGE_SIGNATURE=PASS
 SBOM=PASS
@@ -54,6 +65,11 @@ ROLLBACK_MANIFEST=PASS
 ```text
 GET_/-/ready=PASS
 GET_/metrics=PASS
+GET_OR_POST_/-/reload=DENIED_401_403_ABSENT_AT_PROXY_OR_NETWORK
+GET_/-/support=DENIED_401_403_ABSENT_AT_PROXY_OR_NETWORK
+DIRECT_NATIVE_RELOAD_SUCCESS=NO
+DIRECT_NATIVE_SUPPORT_SUCCESS=NO
+NATIVE_HTTP_PEER_SCOPE=APPROVED_HEALTH_AND_PROMETHEUS_ONLY
 JOURNAL_SUPPORT=PASS
 SERVICE_FILE_LOGS=PASS
 EXPLICIT_CONTAINER_JSON_LOGS=PASS
@@ -68,7 +84,7 @@ UNEXPECTED_5XX=0
 SOURCE_RUNTIME_DRIFT=0
 ```
 
-Use synthetic logs only. Central-host certification must finish before a separate reviewed agent installation on `65.109.65.169`.
+The current candidate must not be promoted to production until the reload/support denial gates are implemented and tested at the actual deployed network boundary. Use synthetic logs only. Central-host certification must finish before a separate reviewed agent installation on `65.109.65.169`.
 
 ## Repository-first remediation
 

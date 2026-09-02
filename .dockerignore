@@ -1,0 +1,7 @@
+.git
+**/__pycache__/
+upstream/docs/
+upstream/integration-tests/
+upstream/**/testdata*/
+upstream/**/*_test.go
+upstream/internal/pipelinetest/

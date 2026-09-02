@@ -35,14 +35,25 @@ jobs:
           required = [
               'appolon1908-hue/Codestra-Alloy', '37.27.128.39', '65.109.65.169',
               'SOURCE_CONTRACT_PREPARED_NOT_DEPLOYED', 'GET` | `/-/ready',
-              'GET` | `/metrics', 'JOURNAL_CAPABLE_BUILD=PASS',
-              'DOCKER_SOCKET_MOUNTED=NO', 'MTLS_LOKI_WRITE=PASS',
-              'UNEXPECTED_404=0', 'SOURCE_RUNTIME_DRIFT=0',
-              'This document does not deploy Alloy',
+              'GET` | `/metrics', 'GET`, `POST` | `/-/reload', 'GET` | `/-/support',
+              'JOURNAL_CAPABLE_BUILD=PASS', 'DOCKER_SOCKET_MOUNTED=NO',
+              'NATIVE_HTTP_ROUTE_INVENTORY=PASS',
+              'HTTP_RELOAD_FROM_NETWORK_PEER=DENIED',
+              'SUPPORT_BUNDLE_FROM_NETWORK_PEER=DENIED',
+              'GET_OR_POST_/-/reload=DENIED_401_403_ABSENT_AT_PROXY_OR_NETWORK',
+              'GET_/-/support=DENIED_401_403_ABSENT_AT_PROXY_OR_NETWORK',
+              'DIRECT_NATIVE_RELOAD_SUCCESS=NO', 'DIRECT_NATIVE_SUPPORT_SUCCESS=NO',
+              'MTLS_LOKI_WRITE=PASS', 'UNEXPECTED_404=0',
+              'SOURCE_RUNTIME_DRIFT=0', 'This document does not deploy Alloy',
           ]
           missing = [value for value in required if value not in text]
           assert not missing, f'missing production API contract controls: {missing}'
-          forbidden = ['ADMIN_BYPASS_AUTHORIZED=YES', 'SSH_CONFIGURATION_CHANGES_AUTHORIZED=YES', ':latest']
+          forbidden = [
+              'ADMIN_BYPASS_AUTHORIZED=YES',
+              'SSH_CONFIGURATION_CHANGES_AUTHORIZED=YES',
+              ':latest',
+              'The native API surface is limited to readiness and metrics',
+          ]
           present = [value for value in forbidden if value in text]
           assert not present, f'forbidden production contract claims: {present}'
           print('CODESTRA_ALLOY_PRODUCTION_API_CONTRACT=PASS')

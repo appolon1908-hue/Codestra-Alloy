@@ -84,7 +84,7 @@ UNEXPECTED_5XX=0
 SOURCE_RUNTIME_DRIFT=0
 ```
 
-The current candidate must not be promoted to production until the reload/support denial gates are implemented and tested at the actual deployed network boundary. Use synthetic logs only. Central-host certification must finish before a separate reviewed agent installation on `65.109.65.169`.
+The repository candidate binds native Alloy to loopback port `12346`, disables support bundles, pprof, and GraphQL, and places a tested fail-closed boundary on private port `12345`. That boundary accepts only exact `GET`/`HEAD` requests for `/-/healthy`, `/-/ready`, and `/metrics`; it rejects queries, mutations, reload, support, debugging, and every other route without forwarding caller credentials or upstream cookies. Production promotion remains blocked until the immutable image and this denial behavior are independently certified in staging. Use synthetic logs only. Central-host certification must finish before a separate reviewed agent installation on `65.109.65.169`.
 
 ## Repository-first remediation
 

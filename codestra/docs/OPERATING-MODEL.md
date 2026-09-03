@@ -154,9 +154,11 @@ Production promotion requires:
 9. Loki mTLS, tenant-header and cross-business denial tests;
 10. WAL restart, backend-outage and disk-capacity tests;
 11. Prometheus self-metrics and alert coverage;
-12. peer-side allowed-readback and reload/support denial evidence;
-13. rollback instructions and previous image digest;
-14. human production approval.
+12. exact proxy unit coverage for query, method, path, timeout, and response-size
+    controls;
+13. peer-side allowed-readback and reload/support denial evidence;
+14. rollback instructions and previous image digest;
+15. human production approval.
 
 Promotion is:
 

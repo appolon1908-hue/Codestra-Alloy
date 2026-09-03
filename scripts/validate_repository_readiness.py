@@ -30,7 +30,7 @@ def validate() -> None:
     if lock.get("runtimeBaseExecutableUsed") is not False: fail("runtime base executable may not be source authority")
     dockerfile=(ROOT/manifest["dockerfile"]).read_text()
     if dockerfile.splitlines()[0]!=f"# syntax={lock['buildFrontendImage']}": fail("Dockerfile frontend mismatch")
-    if "COPY upstream /src/upstream" not in dockerfile or "/alloy-readonly-proxy" not in dockerfile or "COPY --from=alloy-builder" not in dockerfile: fail("source-built executable boundary missing")
+    if "COPY upstream /src/upstream" not in dockerfile or "/alloy-readonly-proxy" not in dockerfile or "go test readonly_proxy.go readonly_proxy_test.go" not in dockerfile or "COPY --from=alloy-builder" not in dockerfile: fail("source-built executable boundary missing")
     dockerignore=(ROOT/".dockerignore").read_text()
     for token in ("upstream/docs/","upstream/integration-tests/","upstream/**/testdata*/","upstream/**/*_test.go","upstream/internal/pipelinetest/"):
         if token not in dockerignore: fail(f"test fixture not excluded from build context: {token}")
@@ -44,6 +44,8 @@ def validate() -> None:
     build_script=(ROOT/"scripts/build_and_inspect_locked_image.sh").read_text()
     for token in (".dockerfile", ".context", '--file "$dockerfile"', '"$context"', "docker network create --internal", "http://alloy-readonly:12345", "http://alloy-readonly:12346", "ALLOY_HEALTHCHECK_EXPECT_STATUS=403", "ALLOY_HEALTHCHECK_METHOD=POST"):
         if token not in build_script: fail(f"exact-image validation omits manifest or route control: {token}")
+    workflow=(ROOT/".github/workflows/validate-codestra-alloy.yml").read_text()
+    if "go test codestra/deploy/readonly_proxy.go codestra/deploy/readonly_proxy_test.go" not in workflow: fail("source CI omits read-only proxy unit tests")
     compose=yaml.safe_load((ROOT/"codestra/deploy/compose.candidate.yaml").read_text()); services=compose.get("services",{}); service=services.get("alloy",{}); proxy=services.get("alloy-readonly-proxy",{})
     if set(services)!={"alloy","alloy-readonly-proxy"}: fail("Alloy runtime must contain the collector and read-only proxy")
     if service.get("privileged") is True or service.get("network_mode")=="host" or service.get("pid")=="host" or service.get("ports"): fail("unsafe Alloy runtime boundary")

@@ -25,4 +25,8 @@ class ReadinessTests(unittest.TestCase):
         source=(ROOT/"scripts/build_and_inspect_locked_image.sh").read_text()
         for token in (".dockerfile",".context",'--file "$dockerfile"','"$context"',"docker network create --internal","http://alloy-readonly:12345","http://alloy-readonly:12346","ALLOY_HEALTHCHECK_EXPECT_STATUS=403","ALLOY_HEALTHCHECK_METHOD=POST"):
             self.assertIn(token,source)
+        dockerfile=(ROOT/"codestra/deploy/Dockerfile").read_text()
+        workflow=(ROOT/".github/workflows/validate-codestra-alloy.yml").read_text()
+        self.assertIn("go test readonly_proxy.go readonly_proxy_test.go",dockerfile)
+        self.assertIn("go test codestra/deploy/readonly_proxy.go codestra/deploy/readonly_proxy_test.go",workflow)
 if __name__=="__main__": unittest.main()

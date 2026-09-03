@@ -508,6 +508,8 @@ def validate_packaging_and_docs() -> None:
         "/alloy-healthcheck",
         "/alloy-readonly-proxy",
         "readonly_proxy.go",
+        "readonly_proxy_test.go",
+        "go test readonly_proxy.go readonly_proxy_test.go",
         "/etc/alloy/config.alloy",
         "USER 0:0",
         "chown -R 10001:10001 /var/lib/alloy",
@@ -550,6 +552,15 @@ def validate_packaging_and_docs() -> None:
     for forbidden_path in ('"/-/reload"', '"/-/support"'):
         if forbidden_path in proxy:
             fail(f"Alloy read-only proxy may not allow native route: {forbidden_path}")
+
+    validation_workflow = require_file(
+        ROOT / ".github" / "workflows" / "validate-codestra-alloy.yml"
+    )
+    if (
+        "go test codestra/deploy/readonly_proxy.go "
+        "codestra/deploy/readonly_proxy_test.go"
+    ) not in validation_workflow:
+        fail("Alloy CI does not execute the read-only proxy unit suite")
 
     env = parse_env_example()
     required_env = {

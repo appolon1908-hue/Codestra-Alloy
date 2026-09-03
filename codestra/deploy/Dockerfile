@@ -27,8 +27,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
       -o /out/alloy-healthcheck \
       ./healthcheck.go
 
-COPY codestra/deploy/readonly_proxy.go ./readonly_proxy.go
-RUN CGO_ENABLED=0 GOOS=linux go build \
+COPY codestra/deploy/readonly_proxy.go codestra/deploy/readonly_proxy_test.go ./
+RUN go test readonly_proxy.go readonly_proxy_test.go \
+    && CGO_ENABLED=0 GOOS=linux go build \
       -buildvcs=false \
       -trimpath \
       -ldflags='-s -w -buildid=' \

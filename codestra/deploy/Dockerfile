@@ -63,3 +63,4 @@ RUN chown -R 10001:10001 /var/lib/alloy \
 
 USER 10001:10001
 ENTRYPOINT ["/alloy-entrypoint"]
+CMD ["run", "--server.http.listen-addr=127.0.0.1:12346", "--server.http.disable-support-bundle", "--server.http.enable-pprof=false", "--server.http.enable-graphql=false", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]

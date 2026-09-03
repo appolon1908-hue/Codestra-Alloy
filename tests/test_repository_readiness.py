@@ -29,4 +29,5 @@ class ReadinessTests(unittest.TestCase):
         self.assertIn("--server.http.enable-pprof=false",command)
         dockerfile=(ROOT/"codestra/deploy/Dockerfile").read_text()
         self.assertIn('ENTRYPOINT ["/alloy-entrypoint"]',dockerfile)
+        self.assertIn('CMD ["run", "--server.http.listen-addr=127.0.0.1:12346", "--server.http.disable-support-bundle", "--server.http.enable-pprof=false", "--server.http.enable-graphql=false", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]',dockerfile)
 if __name__=="__main__": unittest.main()

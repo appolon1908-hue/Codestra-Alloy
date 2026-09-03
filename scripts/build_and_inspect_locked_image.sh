@@ -31,6 +31,18 @@ docker build \
   --tag "$tag" \
   "$context"
 docker run --rm "$tag" --version
+docker image inspect "$tag" | jq -e '
+  .[0].Config.Entrypoint == ["/alloy-entrypoint"] and
+  .[0].Config.Cmd == [
+    "run",
+    "--server.http.listen-addr=127.0.0.1:12346",
+    "--server.http.disable-support-bundle",
+    "--server.http.enable-pprof=false",
+    "--server.http.enable-graphql=false",
+    "--storage.path=/var/lib/alloy",
+    "/etc/alloy/config.alloy"
+  ]
+' >/dev/null
 
 container_id=""
 cleanup() {

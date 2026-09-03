@@ -30,7 +30,7 @@ def validate() -> None:
     dockerfile=(ROOT/manifest["dockerfile"]).read_text()
     if dockerfile.splitlines()[0]!=f"# syntax={lock['buildFrontendImage']}": fail("Dockerfile frontend mismatch")
     if "COPY upstream /src/upstream" not in dockerfile or "COPY --from=alloy-builder" not in dockerfile: fail("source-built executable boundary missing")
-    for token in ("alloy_entrypoint.go", "alloy_entrypoint_test.go", "go test ./alloy_entrypoint.go ./alloy_entrypoint_test.go", 'ENTRYPOINT ["/alloy-entrypoint"]'):
+    for token in ("alloy_entrypoint.go", "alloy_entrypoint_test.go", "go test ./alloy_entrypoint.go ./alloy_entrypoint_test.go", 'ENTRYPOINT ["/alloy-entrypoint"]', 'CMD ["run", "--server.http.listen-addr=127.0.0.1:12346", "--server.http.disable-support-bundle", "--server.http.enable-pprof=false", "--server.http.enable-graphql=false", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]'):
         if token not in dockerfile: fail(f"private HTTP boundary build missing: {token}")
     dockerignore=(ROOT/".dockerignore").read_text()
     for token in ("upstream/docs/","upstream/integration-tests/","upstream/**/testdata*/","upstream/**/*_test.go","upstream/internal/pipelinetest/"):

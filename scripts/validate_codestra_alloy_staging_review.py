@@ -250,6 +250,8 @@ def validate_source_bound_image(lock: dict[str, Any]) -> None:
         "cgoEnabled": True,
         "buildTags": ["promtail_journal_enabled"],
         "systemdJournalImplementation": "enabled",
+        "readOnlyProxyPath": "/alloy-readonly-proxy",
+        "readOnlyProxyBuiltFromRepositorySource": True,
         "inheritedBaseImageExecutableAllowed": False,
         "embeddedSourceLockPath": "/usr/share/codestra/CODESTRA_UPSTREAM_LOCK.json",
     }:

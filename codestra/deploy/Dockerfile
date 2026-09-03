@@ -27,6 +27,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
       -o /out/alloy-healthcheck \
       ./healthcheck.go
 
+COPY codestra/deploy/readonly_proxy.go ./readonly_proxy.go
+RUN CGO_ENABLED=0 GOOS=linux go build \
+      -buildvcs=false \
+      -trimpath \
+      -ldflags='-s -w -buildid=' \
+      -o /out/alloy-readonly-proxy \
+      ./readonly_proxy.go
+
 FROM ${ALLOY_BASE_IMAGE}
 LABEL org.opencontainers.image.title="Codestra Corporate Alloy"
 LABEL org.opencontainers.image.description="Business-scoped, non-privileged host and service log collection for Codestra"
@@ -40,6 +48,7 @@ LABEL codestra.feature.systemd-journal="promtail_journal_enabled"
 USER 0:0
 COPY --from=alloy-builder --chown=10001:10001 --chmod=0555 /out/alloy /bin/alloy
 COPY --from=alloy-builder --chown=10001:10001 --chmod=0555 /out/alloy-healthcheck /alloy-healthcheck
+COPY --from=alloy-builder --chown=10001:10001 --chmod=0555 /out/alloy-readonly-proxy /alloy-readonly-proxy
 COPY --chown=10001:10001 --chmod=0444 CODESTRA_UPSTREAM_LOCK.json /usr/share/codestra/CODESTRA_UPSTREAM_LOCK.json
 COPY --chown=10001:10001 --chmod=0444 codestra/source-image-contract.v1.json /usr/share/codestra/source-image-contract.v1.json
 COPY --chown=10001:10001 --chmod=0444 codestra/config.alloy /etc/alloy/config.alloy

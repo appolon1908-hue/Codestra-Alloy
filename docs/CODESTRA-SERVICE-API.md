@@ -19,6 +19,11 @@ Grafana Alloy keeps its native API and protocol. The shared Codestra control pla
 | `GET` | `/-/ready` | readiness | read_only | never proxied by the Codestra control API |
 | `GET` | `/metrics` | metrics | read_only | never proxied by the Codestra control API |
 
+Approved peers reach these routes only through the repository-built read-only
+proxy on private port `12346`. The native Alloy server is loopback-only on
+`127.0.0.1:12345`; `/-/reload`, `/-/support`, queries, non-GET methods, and all
+unlisted paths are denied before a request can reach native Alloy.
+
 ## Suite integrations
 
 | Peer | Direction | Signal | Protocol | Purpose |

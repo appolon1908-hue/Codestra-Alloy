@@ -130,6 +130,13 @@ Subject to staging calibration:
 - p95 collection-to-Loki delay below 30 seconds during expected peak load;
 - self-metrics continuously scrapeable by Prometheus on the private network.
 
+Alloy's native HTTP server binds to container loopback on `127.0.0.1:12345`.
+The companion process in the same immutable image and network namespace exposes
+only GET `/-/healthy`, GET `/-/ready`, and GET `/metrics` on private port
+`12346`. It denies reload, support bundles, query strings, mutations, and
+unlisted paths with `403`, so a shared private network is not management
+authority.
+
 These are engineering objectives, not production SLOs until staging load and recovery evidence exists.
 
 ## Release evidence
@@ -147,8 +154,9 @@ Production promotion requires:
 9. Loki mTLS, tenant-header and cross-business denial tests;
 10. WAL restart, backend-outage and disk-capacity tests;
 11. Prometheus self-metrics and alert coverage;
-12. rollback instructions and previous image digest;
-13. human production approval.
+12. peer-side allowed-readback and reload/support denial evidence;
+13. rollback instructions and previous image digest;
+14. human production approval.
 
 Promotion is:
 

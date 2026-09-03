@@ -14,4 +14,15 @@ class ReadinessTests(unittest.TestCase):
     def test_fixture_exclusions_are_bilateral(self)->None:
         dockerignore=(ROOT/".dockerignore").read_text(); gitleaks=(ROOT/".gitleaks.toml").read_text()
         self.assertIn("upstream/**/testdata*/",dockerignore); self.assertIn("testdata",gitleaks); self.assertIn("upstream/**/*_test.go",dockerignore)
+    def test_native_admin_is_loopback_only_behind_read_only_proxy(self)->None:
+        compose=yaml.safe_load((ROOT/"codestra/deploy/compose.candidate.yaml").read_text()); services=compose["services"]
+        self.assertEqual(set(services),{"alloy","alloy-readonly-proxy"})
+        self.assertIn("--server.http.listen-addr=127.0.0.1:12345",services["alloy"]["command"])
+        self.assertEqual(set(map(str,services["alloy"]["expose"])),{"12346"})
+        self.assertEqual(services["alloy-readonly-proxy"]["network_mode"],"service:alloy")
+        self.assertEqual(services["alloy-readonly-proxy"]["entrypoint"],["/alloy-readonly-proxy"])
+    def test_exact_image_build_uses_manifest_paths_and_denial_probe(self)->None:
+        source=(ROOT/"scripts/build_and_inspect_locked_image.sh").read_text()
+        for token in (".dockerfile",".context",'--file "$dockerfile"','"$context"',"docker network create --internal","http://alloy-readonly:12345","http://alloy-readonly:12346","ALLOY_HEALTHCHECK_EXPECT_STATUS=403","ALLOY_HEALTHCHECK_METHOD=POST"):
+            self.assertIn(token,source)
 if __name__=="__main__": unittest.main()

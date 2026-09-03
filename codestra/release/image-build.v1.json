@@ -8,6 +8,6 @@
     "GO_BUILDER_IMAGE": "docker.io/grafana/alloy-build-image@sha256:9fa2a341b53503ce42cf9900c401d689a68ea67cdec6a20f53d72e3665fb8dc6"
   },
   "license": "Apache-2.0",
-  "description": "Source-built private Grafana Alloy agent with bounded Codestra telemetry routing and redaction.",
+  "description": "Source-built private Grafana Alloy agent with bounded telemetry routing, redaction, and a strict read-only health and metrics proxy.",
   "productionActivation": false
 }

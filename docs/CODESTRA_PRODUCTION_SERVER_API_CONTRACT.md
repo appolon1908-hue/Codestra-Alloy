@@ -17,14 +17,15 @@ The upstream Alloy listener registers more than readiness and metrics. Productio
 
 | Method | Path | Purpose | Production boundary |
 |---|---|---|---|
-| `GET` | `/-/ready` | readiness | private approved health client only |
-| `GET` | `/metrics` | Alloy self-metrics | private approved Prometheus client only |
-| `GET`, `POST` | `/-/reload` | runtime configuration reload | forbidden from attached network peers; use immutable reviewed redeploy |
-| `GET` | `/-/support` | support-bundle access | disabled with the supported flag or denied by a reviewed authenticated proxy/network boundary |
+| `GET` | `:12346/-/healthy` | process health | strict read-only proxy on private attached networks |
+| `GET` | `:12346/-/ready` | readiness | strict read-only proxy on private attached networks |
+| `GET` | `:12346/metrics` | Alloy self-metrics | strict read-only proxy for approved Prometheus clients |
+| `GET`, `POST` | `:12346/-/reload` | runtime configuration reload | denied `403`; native Alloy remains loopback-only on `:12345` |
+| `GET` | `:12346/-/support` | support-bundle access | denied `403`; native Alloy remains loopback-only on `:12345` |
 
 Alloy does not expose a business API. The native listener must not be generally reachable merely because a caller is attached to `codestra-business-logs` or `codestra-observability`. A production deployment that exposes unauthenticated reload or support-bundle access is blocked, even when readiness and metrics pass.
 
-Unexpected `404` on required readiness/metrics routes, unexpected `5xx`, a public native port, an unsupported journal stub, or peer access to reload/support blocks production. A denied administrative route may be absent at the approved proxy, return `401`/`403`, or be unreachable by network policy; a direct successful native response is forbidden.
+Unexpected `404` on required readiness/metrics routes, unexpected `5xx`, a public native port, an unsupported journal stub, or peer access to reload/support blocks production. The repository-built proxy has an exact GET-only allowlist for health, readiness, and metrics, rejects query strings and every other method or path, bounds headers, response size, and timeouts, and returns `403` before contacting native Alloy. The native server binds only to container loopback.
 
 ## Collection and security boundary
 
@@ -63,6 +64,7 @@ ROLLBACK_MANIFEST=PASS
 ## Runtime certification
 
 ```text
+GET_/-/healthy=PASS
 GET_/-/ready=PASS
 GET_/metrics=PASS
 GET_OR_POST_/-/reload=DENIED_401_403_ABSENT_AT_PROXY_OR_NETWORK
@@ -84,7 +86,7 @@ UNEXPECTED_5XX=0
 SOURCE_RUNTIME_DRIFT=0
 ```
 
-The current candidate must not be promoted to production until the reload/support denial gates are implemented and tested at the actual deployed network boundary. Use synthetic logs only. Central-host certification must finish before a separate reviewed agent installation on `65.109.65.169`.
+Exact-image CI starts the repository-built proxy without a native upstream and proves GET and POST reload plus GET support are denied `403`, while the allowlisted metrics route reaches the upstream boundary. Later server certification must repeat the denial and allowed-readback tests from an attached private peer before activation. Use synthetic logs only. Central-host certification must finish before a separate reviewed agent installation on `65.109.65.169`.
 
 ## Repository-first remediation
 

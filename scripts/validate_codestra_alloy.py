@@ -343,9 +343,10 @@ def validate_alloy_config() -> None:
 def validate_compose() -> None:
     compose = load_yaml(COMPOSE)
     services = compose.get("services", {})
-    if set(services) != {"alloy"}:
-        fail("Alloy Compose candidate must define exactly one Alloy service")
+    if set(services) != {"alloy", "alloy-readonly-proxy"}:
+        fail("Alloy Compose candidate must define Alloy and its read-only proxy")
     service = services["alloy"]
+    proxy = services["alloy-readonly-proxy"]
     if service.get("user") != "10001:10001":
         fail("Alloy must run as UID/GID 10001")
     if service.get("read_only") is not True:
@@ -360,8 +361,12 @@ def validate_compose() -> None:
         fail("Alloy must set no-new-privileges")
     if service.get("ports"):
         fail("Alloy may not publish a host port")
-    if set(map(str, service.get("expose", []))) != {"12345"}:
-        fail("Alloy must expose only its private self-metrics/readiness port")
+    if "--server.http.listen-addr=127.0.0.1:12345" not in service.get(
+        "command", []
+    ):
+        fail("native Alloy administration must bind only to container loopback")
+    if set(map(str, service.get("expose", []))) != {"12346"}:
+        fail("Alloy must expose only its filtered private read-only port")
     if set(service.get("networks", [])) != {
         "codestra-business-logs",
         "codestra-observability",
@@ -413,6 +418,33 @@ def validate_compose() -> None:
         if field not in limits:
             fail(f"Alloy runtime is missing resource limit {field}")
 
+    if proxy.get("image") != service.get("image"):
+        fail("Alloy proxy must use the same immutable repository image")
+    if proxy.get("entrypoint") != ["/alloy-readonly-proxy"]:
+        fail("Alloy proxy must execute the repository-built read-only binary")
+    if proxy.get("network_mode") != "service:alloy":
+        fail("Alloy proxy must share only the Alloy network namespace")
+    if proxy.get("depends_on", {}).get("alloy", {}).get("condition") != "service_healthy":
+        fail("Alloy proxy must wait for native Alloy readiness")
+    if proxy.get("ports") or proxy.get("networks") or proxy.get("build"):
+        fail("Alloy proxy may not add publication, network, or build authority")
+    if proxy.get("user") != "10001:10001" or proxy.get("read_only") is not True:
+        fail("Alloy proxy must use the hardened non-root filesystem boundary")
+    if "ALL" not in proxy.get("cap_drop", []):
+        fail("Alloy proxy must drop all Linux capabilities")
+    if "no-new-privileges:true" not in proxy.get("security_opt", []):
+        fail("Alloy proxy must set no-new-privileges")
+    if proxy.get("healthcheck", {}).get("test") != ["CMD", "/alloy-healthcheck"]:
+        fail("Alloy proxy must use the bounded repository health probe")
+    if proxy.get("environment", {}).get("ALLOY_HEALTHCHECK_URL") != (
+        "http://127.0.0.1:12346/-/ready"
+    ):
+        fail("Alloy proxy healthcheck must use the filtered readiness route")
+    proxy_limits = proxy.get("deploy", {}).get("resources", {}).get("limits", {})
+    for field in ("cpus", "memory", "pids"):
+        if field not in proxy_limits:
+            fail(f"Alloy proxy is missing resource limit {field}")
+
     serialized = COMPOSE.read_text(encoding="utf-8")
     for forbidden in (
         "/var/run/docker.sock",
@@ -423,6 +455,7 @@ def validate_compose() -> None:
         "network_mode: host",
         "pid: host",
         "0.0.0.0:12345",
+        "--server.http.listen-addr=:12345",
     ):
         if forbidden in serialized:
             fail(f"Alloy runtime contains forbidden content: {forbidden}")
@@ -473,6 +506,8 @@ def validate_packaging_and_docs() -> None:
         "CGO_ENABLED=0",
         "-trimpath",
         "/alloy-healthcheck",
+        "/alloy-readonly-proxy",
+        "readonly_proxy.go",
         "/etc/alloy/config.alloy",
         "USER 0:0",
         "chown -R 10001:10001 /var/lib/alloy",
@@ -493,6 +528,28 @@ def validate_packaging_and_docs() -> None:
         fail("Alloy health probe must use the local readiness endpoint")
     if "os/exec" in healthcheck or "exec.Command" in healthcheck:
         fail("Alloy health probe may not invoke a shell or subprocess")
+    for fragment in ("Proxy: nil", "http.ErrUseLastResponse", "ALLOY_HEALTHCHECK_EXPECT_STATUS"):
+        if fragment not in healthcheck:
+            fail(f"Alloy health probe omits exact private-route control: {fragment}")
+
+    proxy = require_file(ROOT / "codestra" / "deploy" / "readonly_proxy.go")
+    for fragment in (
+        '"/-/healthy"',
+        '"/-/ready"',
+        '"/metrics"',
+        "request.Method != http.MethodGet",
+        "request.URL.RawQuery != \"\"",
+        "http.StatusForbidden",
+        "maxResponseBytes",
+        "ReadHeaderTimeout",
+        "WriteTimeout",
+        "MaxHeaderBytes",
+    ):
+        if fragment not in proxy:
+            fail(f"Alloy read-only proxy omits boundary control: {fragment}")
+    for forbidden_path in ('"/-/reload"', '"/-/support"'):
+        if forbidden_path in proxy:
+            fail(f"Alloy read-only proxy may not allow native route: {forbidden_path}")
 
     env = parse_env_example()
     required_env = {

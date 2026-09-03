@@ -25,6 +25,8 @@
       "promtail_journal_enabled"
     ],
     "systemdJournalImplementation": "enabled",
+    "readOnlyProxyPath": "/alloy-readonly-proxy",
+    "readOnlyProxyBuiltFromRepositorySource": true,
     "inheritedBaseImageExecutableAllowed": false,
     "embeddedSourceLockPath": "/usr/share/codestra/CODESTRA_UPSTREAM_LOCK.json"
   },

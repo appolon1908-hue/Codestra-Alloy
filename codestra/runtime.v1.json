@@ -134,7 +134,14 @@
     "dropAllCapabilities": true,
     "noNewPrivileges": true,
     "nativeHostPortPublished": false,
-    "privateSelfMetricsPort": 12345,
+    "nativeAdminLoopbackPort": 12345,
+    "privateReadOnlyPort": 12346,
+    "privateReadOnlyRoutes": [
+      "/-/healthy",
+      "/-/ready",
+      "/metrics"
+    ],
+    "nativeAdminRoutesReachableFromPeers": false,
     "dockerSocketMounted": false,
     "resourceLimitsRequired": true,
     "immutableImageRequired": true

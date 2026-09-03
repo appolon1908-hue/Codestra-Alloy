@@ -11,9 +11,9 @@ services:
     image: ${CODESTRA_ALLOY_IMAGE_NAME:?set the immutable Codestra Alloy image name and tag}@sha256:${CODESTRA_ALLOY_IMAGE_DIGEST:?set the 64-character Codestra Alloy sha256 digest}
     command:
       - run
-      # The listener is reachable only on attached private container networks;
-      # no host port is published and the native runtime has no public route.
-      - --server.http.listen-addr=:12345
+      # Native administration remains loopback-only. Attached peers use the
+      # strict read-only proxy on 12346 for health, readiness, and metrics.
+      - --server.http.listen-addr=127.0.0.1:12345
       - --storage.path=/var/lib/alloy
       - /etc/alloy/config.alloy
     restart: unless-stopped
@@ -34,7 +34,7 @@ services:
       - alloy_client_cert
       - alloy_client_key
     expose:
-      - "12345"
+      - "12346"
     networks:
       - codestra-business-logs
       - codestra-observability
@@ -99,6 +99,58 @@ services:
         reservations:
           cpus: "0.25"
           memory: 256M
+
+  alloy-readonly-proxy:
+    image: ${CODESTRA_ALLOY_IMAGE_NAME:?set the immutable Codestra Alloy image name and tag}@sha256:${CODESTRA_ALLOY_IMAGE_DIGEST:?set the 64-character Codestra Alloy sha256 digest}
+    entrypoint:
+      - /alloy-readonly-proxy
+    command: []
+    network_mode: service:alloy
+    depends_on:
+      alloy:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    read_only: true
+    pids_limit: 64
+    environment:
+      ALLOY_HEALTHCHECK_URL: http://127.0.0.1:12346/-/ready
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: [CMD, /alloy-healthcheck]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    labels:
+      codestra.business: ${CODESTRA_BUSINESS:?required approved Codestra business ID}
+      codestra.application: observability
+      codestra.service: alloy-readonly-proxy
+      codestra.environment: ${CODESTRA_ENVIRONMENT:?required}
+      codestra.region: ${CODESTRA_REGION:?required}
+      codestra.server: ${CODESTRA_SERVER:?required canonical server name}
+      codestra.deployment: ${CODESTRA_ALLOY_DEPLOYMENT_ID:?required immutable Alloy deployment ID}
+      codestra.telemetry.native-admin: "denied"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
+          pids: 64
+        reservations:
+          cpus: "0.01"
+          memory: 16M
 
 networks:
   codestra-business-logs:

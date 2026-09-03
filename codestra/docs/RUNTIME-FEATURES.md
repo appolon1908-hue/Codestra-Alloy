@@ -10,7 +10,8 @@
 - controlled application/service labels derived from approved directory names;
 - removal of filename and container identity from Loki stream labels;
 - JSON-formatted Alloy self logs;
-- private Alloy readiness and self-metrics endpoint;
+- private GET-only Alloy readiness and self-metrics proxy with native
+  administration bound to loopback;
 - TLS-verified Loki write with deployment-controlled tenant ID;
 - durable Loki WAL and bounded retry/backoff;
 - defense-in-depth secret, personal-data, payload and SQL redaction;
@@ -51,6 +52,7 @@ Alloy does not:
 - create customer-, account-, user- or request-level Loki stream labels;
 - retain raw credentials, customer payloads, broker/exchange signing material or financial records;
 - expose a public native endpoint;
+- expose reload or support-bundle routes to attached network peers;
 - mutate a business application or provider;
 - send email, SMS or voice;
 - execute n8n or write to Odoo;

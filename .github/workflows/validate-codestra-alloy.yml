@@ -165,7 +165,7 @@ jobs:
           git diff --exit-code -- codestra/deploy/healthcheck.go codestra/deploy/alloy_entrypoint.go codestra/deploy/alloy_entrypoint_test.go
           go vet codestra/deploy/healthcheck.go
           go vet codestra/deploy/alloy_entrypoint.go codestra/deploy/alloy_entrypoint_test.go
-          CGO_ENABLED=0 go test -race codestra/deploy/alloy_entrypoint.go codestra/deploy/alloy_entrypoint_test.go
+          CGO_ENABLED=1 go test -race codestra/deploy/alloy_entrypoint.go codestra/deploy/alloy_entrypoint_test.go
           CGO_ENABLED=0 go build -buildvcs=false -trimpath -o /tmp/alloy-healthcheck codestra/deploy/healthcheck.go
 
       - name: Build exact source-bound Alloy executable with journal support

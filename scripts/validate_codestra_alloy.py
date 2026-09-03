@@ -18,6 +18,8 @@ CONFIG = CODESTRA / "config.alloy"
 COMPOSE = CODESTRA / "deploy" / "compose.candidate.yaml"
 DOCKERFILE = CODESTRA / "deploy" / "Dockerfile"
 HEALTHCHECK = CODESTRA / "deploy" / "healthcheck.go"
+ENTRYPOINT = CODESTRA / "deploy" / "alloy_entrypoint.go"
+ENTRYPOINT_TEST = CODESTRA / "deploy" / "alloy_entrypoint_test.go"
 ENV_EXAMPLE = CODESTRA / "deploy" / "runtime.env.example"
 OPERATING_MODEL = CODESTRA / "docs" / "OPERATING-MODEL.md"
 RUNTIME_FEATURES = CODESTRA / "docs" / "RUNTIME-FEATURES.md"
@@ -375,6 +377,15 @@ def validate_compose() -> None:
         fail("Alloy Loki mTLS secret-file contract is incomplete")
     if service.get("healthcheck", {}).get("test") != ["CMD", "/alloy-healthcheck"]:
         fail("Alloy must use the native readiness probe")
+    command = service.get("command", [])
+    for required in (
+        "--server.http.listen-addr=127.0.0.1:12346",
+        "--server.http.disable-support-bundle",
+        "--server.http.enable-pprof=false",
+        "--server.http.enable-graphql=false",
+    ):
+        if required not in command:
+            fail(f"Alloy private HTTP boundary flag is missing: {required}")
 
     volumes = service.get("volumes", [])
     if "alloy-data:/var/lib/alloy" not in [str(item) for item in volumes]:
@@ -473,6 +484,9 @@ def validate_packaging_and_docs() -> None:
         "CGO_ENABLED=0",
         "-trimpath",
         "/alloy-healthcheck",
+        "/alloy-entrypoint",
+        "go test ./alloy_entrypoint.go ./alloy_entrypoint_test.go",
+        'ENTRYPOINT ["/alloy-entrypoint"]',
         "/etc/alloy/config.alloy",
         "USER 0:0",
         "chown -R 10001:10001 /var/lib/alloy",
@@ -487,6 +501,17 @@ def validate_packaging_and_docs() -> None:
         fail("Alloy storage ownership must be prepared before the final non-root USER")
     if ":latest" in dockerfile:
         fail("Alloy Dockerfile may not use latest tags")
+
+    entrypoint = require_file(ENTRYPOINT)
+    entrypoint_test = require_file(ENTRYPOINT_TEST)
+    for required in ('"/-/healthy"', '"/-/ready"', '"/metrics"'):
+        if required not in entrypoint:
+            fail(f"Alloy HTTP boundary omits approved route: {required}")
+    for forbidden_route in ('"/-/reload"', '"/-/support"', '"/debug/pprof/"'):
+        if forbidden_route not in entrypoint_test:
+            fail(f"Alloy HTTP boundary test omits denied route: {forbidden_route}")
+    if 'r.URL.RawQuery != ""' not in entrypoint:
+        fail("Alloy HTTP boundary must reject caller-selected query parameters")
 
     healthcheck = require_file(HEALTHCHECK)
     if "http://127.0.0.1:12345/-/ready" not in healthcheck:

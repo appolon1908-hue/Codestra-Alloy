@@ -17,7 +17,7 @@ def validate() -> None:
     missing=[p for p in REQUIRED if not (ROOT/p).is_file()]
     if missing: fail(f"missing readiness files: {missing}")
     manifest=load("codestra/release/image-build.v1.json"); lock=load("codestra/release/runtime-base.lock.json")
-    if manifest.get("imageId")!="alloy" or manifest.get("context")!="." or manifest.get("productionActivation") is not False: fail("image manifest identity/context/activation mismatch")
+    if manifest.get("imageId")!="alloy" or manifest.get("dockerfile")!="codestra/deploy/Dockerfile" or manifest.get("context")!="." or manifest.get("productionActivation") is not False: fail("image manifest identity/dockerfile/context/activation mismatch")
     if lock.get("artifactModel")!="repository-built-signed-image" or lock.get("productionActivation") is not False: fail("runtime lock model/activation mismatch")
     for field in ("buildFrontendImage","builderImage","runtimeBaseImage"):
         if not IMAGE.fullmatch(str(lock.get(field,""))): fail(f"mutable build input: {field}")
@@ -30,6 +30,8 @@ def validate() -> None:
     dockerfile=(ROOT/manifest["dockerfile"]).read_text()
     if dockerfile.splitlines()[0]!=f"# syntax={lock['buildFrontendImage']}": fail("Dockerfile frontend mismatch")
     if "COPY upstream /src/upstream" not in dockerfile or "COPY --from=alloy-builder" not in dockerfile: fail("source-built executable boundary missing")
+    for token in ("alloy_entrypoint.go", "alloy_entrypoint_test.go", "go test ./alloy_entrypoint.go ./alloy_entrypoint_test.go", 'ENTRYPOINT ["/alloy-entrypoint"]'):
+        if token not in dockerfile: fail(f"private HTTP boundary build missing: {token}")
     dockerignore=(ROOT/".dockerignore").read_text()
     for token in ("upstream/docs/","upstream/integration-tests/","upstream/**/testdata*/","upstream/**/*_test.go","upstream/internal/pipelinetest/"):
         if token not in dockerignore: fail(f"test fixture not excluded from build context: {token}")
@@ -42,6 +44,12 @@ def validate() -> None:
         if build_call not in (ROOT/relative).read_text(): fail(f"merge/protected image build missing: {relative}")
     compose=yaml.safe_load((ROOT/"codestra/deploy/compose.candidate.yaml").read_text()); service=compose.get("services",{}).get("alloy",{})
     if service.get("privileged") is True or service.get("network_mode")=="host" or service.get("pid")=="host" or service.get("ports"): fail("unsafe Alloy runtime boundary")
+    command=service.get("command",[])
+    for required in ("--server.http.listen-addr=127.0.0.1:12346", "--server.http.disable-support-bundle", "--server.http.enable-pprof=false", "--server.http.enable-graphql=false"):
+        if required not in command: fail(f"Alloy private HTTP boundary flag missing: {required}")
+    helper=(ROOT/"scripts/build_and_inspect_locked_image.sh").read_text()
+    for required in ('manifest="codestra/release/image-build.v1.json"', "'.dockerfile | select(. == \"codestra/deploy/Dockerfile\")'", "'.context | select(. == \".\")'", '--file "$dockerfile"', '"$context"'):
+        if required not in helper: fail(f"image helper does not consume the locked manifest: {required}")
     for workflow in (ROOT/".github/workflows").glob("*.yml"):
         for ref in re.findall(r"(?m)^\s*(?:-\s*)?uses:\s*([^\s#]+)",workflow.read_text()):
             if not ref.startswith("./") and not re.fullmatch(r"[^@\s]+@[0-9a-f]{40}",ref): fail(f"mutable action: {workflow.name}: {ref}")

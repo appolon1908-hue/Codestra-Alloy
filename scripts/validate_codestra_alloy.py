@@ -487,6 +487,7 @@ def validate_packaging_and_docs() -> None:
         "/alloy-entrypoint",
         "go test ./alloy_entrypoint.go ./alloy_entrypoint_test.go",
         'ENTRYPOINT ["/alloy-entrypoint"]',
+        'CMD ["run", "--server.http.listen-addr=127.0.0.1:12346", "--server.http.disable-support-bundle", "--server.http.enable-pprof=false", "--server.http.enable-graphql=false", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]',
         "/etc/alloy/config.alloy",
         "USER 0:0",
         "chown -R 10001:10001 /var/lib/alloy",

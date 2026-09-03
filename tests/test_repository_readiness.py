@@ -14,4 +14,20 @@ class ReadinessTests(unittest.TestCase):
     def test_fixture_exclusions_are_bilateral(self)->None:
         dockerignore=(ROOT/".dockerignore").read_text(); gitleaks=(ROOT/".gitleaks.toml").read_text()
         self.assertIn("upstream/**/testdata*/",dockerignore); self.assertIn("testdata",gitleaks); self.assertIn("upstream/**/*_test.go",dockerignore)
+    def test_build_helper_consumes_declared_manifest(self)->None:
+        helper=(ROOT/"scripts/build_and_inspect_locked_image.sh").read_text()
+        self.assertIn('manifest="codestra/release/image-build.v1.json"',helper)
+        self.assertIn(".dockerfile | select",helper)
+        self.assertIn(".context | select",helper)
+        self.assertIn('--file "$dockerfile"',helper)
+        subprocess.run(["bash","scripts/build_and_inspect_locked_image.sh","--validate-manifest"],cwd=ROOT,check=True)
+    def test_private_http_boundary_is_built_and_configured(self)->None:
+        compose=yaml.safe_load((ROOT/"codestra/deploy/compose.candidate.yaml").read_text())
+        command=compose["services"]["alloy"]["command"]
+        self.assertIn("--server.http.listen-addr=127.0.0.1:12346",command)
+        self.assertIn("--server.http.disable-support-bundle",command)
+        self.assertIn("--server.http.enable-pprof=false",command)
+        dockerfile=(ROOT/"codestra/deploy/Dockerfile").read_text()
+        self.assertIn('ENTRYPOINT ["/alloy-entrypoint"]',dockerfile)
+        self.assertIn('CMD ["run", "--server.http.listen-addr=127.0.0.1:12346", "--server.http.disable-support-bundle", "--server.http.enable-pprof=false", "--server.http.enable-graphql=false", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]',dockerfile)
 if __name__=="__main__": unittest.main()

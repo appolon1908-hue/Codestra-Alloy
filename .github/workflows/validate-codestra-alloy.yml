@@ -159,11 +159,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends binutils gcc libsystemd-dev pkg-config
 
-      - name: Format, vet, and compile native health probe
+      - name: Format, vet, test, and compile native helpers
         run: |
-          gofmt -w codestra/deploy/healthcheck.go
-          git diff --exit-code -- codestra/deploy/healthcheck.go
+          gofmt -w codestra/deploy/healthcheck.go codestra/deploy/alloy_entrypoint.go codestra/deploy/alloy_entrypoint_test.go
+          git diff --exit-code -- codestra/deploy/healthcheck.go codestra/deploy/alloy_entrypoint.go codestra/deploy/alloy_entrypoint_test.go
           go vet codestra/deploy/healthcheck.go
+          go vet codestra/deploy/alloy_entrypoint.go codestra/deploy/alloy_entrypoint_test.go
+          CGO_ENABLED=1 go test -race codestra/deploy/alloy_entrypoint.go codestra/deploy/alloy_entrypoint_test.go
           CGO_ENABLED=0 go build -buildvcs=false -trimpath -o /tmp/alloy-healthcheck codestra/deploy/healthcheck.go
 
       - name: Build exact source-bound Alloy executable with journal support

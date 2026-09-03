@@ -11,9 +11,13 @@ services:
     image: ${CODESTRA_ALLOY_IMAGE_NAME:?set the immutable Codestra Alloy image name and tag}@sha256:${CODESTRA_ALLOY_IMAGE_DIGEST:?set the 64-character Codestra Alloy sha256 digest}
     command:
       - run
-      # The listener is reachable only on attached private container networks;
-      # no host port is published and the native runtime has no public route.
-      - --server.http.listen-addr=:12345
+      # Native Alloy is loopback-only. The repository-built entrypoint exposes
+      # only health/readiness/metrics on private port 12345 and rejects every
+      # administrative, debugging, GraphQL, and caller-selected route.
+      - --server.http.listen-addr=127.0.0.1:12346
+      - --server.http.disable-support-bundle
+      - --server.http.enable-pprof=false
+      - --server.http.enable-graphql=false
       - --storage.path=/var/lib/alloy
       - /etc/alloy/config.alloy
     restart: unless-stopped

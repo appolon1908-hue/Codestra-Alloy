@@ -27,6 +27,16 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
       -o /out/alloy-healthcheck \
       ./healthcheck.go
 
+COPY codestra/deploy/alloy_entrypoint.go ./alloy_entrypoint.go
+COPY codestra/deploy/alloy_entrypoint_test.go ./alloy_entrypoint_test.go
+RUN CGO_ENABLED=0 GOOS=linux go test ./alloy_entrypoint.go ./alloy_entrypoint_test.go \
+    && CGO_ENABLED=0 GOOS=linux go build \
+      -buildvcs=false \
+      -trimpath \
+      -ldflags='-s -w -buildid=' \
+      -o /out/alloy-entrypoint \
+      ./alloy_entrypoint.go
+
 FROM ${ALLOY_BASE_IMAGE}
 LABEL org.opencontainers.image.title="Codestra Corporate Alloy"
 LABEL org.opencontainers.image.description="Business-scoped, non-privileged host and service log collection for Codestra"
@@ -40,6 +50,7 @@ LABEL codestra.feature.systemd-journal="promtail_journal_enabled"
 USER 0:0
 COPY --from=alloy-builder --chown=10001:10001 --chmod=0555 /out/alloy /bin/alloy
 COPY --from=alloy-builder --chown=10001:10001 --chmod=0555 /out/alloy-healthcheck /alloy-healthcheck
+COPY --from=alloy-builder --chown=10001:10001 --chmod=0555 /out/alloy-entrypoint /alloy-entrypoint
 COPY --chown=10001:10001 --chmod=0444 CODESTRA_UPSTREAM_LOCK.json /usr/share/codestra/CODESTRA_UPSTREAM_LOCK.json
 COPY --chown=10001:10001 --chmod=0444 codestra/source-image-contract.v1.json /usr/share/codestra/source-image-contract.v1.json
 COPY --chown=10001:10001 --chmod=0444 codestra/config.alloy /etc/alloy/config.alloy
@@ -51,3 +62,5 @@ RUN chown -R 10001:10001 /var/lib/alloy \
     && chmod -R u+rwX,g+rwX,o-rwx /var/lib/alloy
 
 USER 10001:10001
+ENTRYPOINT ["/alloy-entrypoint"]
+CMD ["run", "--server.http.listen-addr=127.0.0.1:12346", "--server.http.disable-support-bundle", "--server.http.enable-pprof=false", "--server.http.enable-graphql=false", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]

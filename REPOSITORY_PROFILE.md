@@ -4,7 +4,7 @@
 
 - **Repository:** `appolon1908-hue/Codestra-Alloy`
 - **Category:** Observability agent — Grafana Alloy
-- **Visibility:** `public`
+- **Visibility:** `private`
 - **Default branch:** `main`
 - **Canonical hostname:** `allo.codestra.media`
 - **Exposure:** Internal/private only; diagnostics must not be Internet-public

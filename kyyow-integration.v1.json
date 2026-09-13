@@ -6,27 +6,20 @@
   "exposure": "private",
   "native_ports": [
     12345,
-    4317,
-    4318
+    12346
   ],
   "inputs": [
-    "opentelemetry:otlp",
-    "node-exporter:metrics",
-    "cadvisor:metrics",
-    "redis-exporter:metrics",
-    "blackbox-exporter:metrics",
-    "postgres-exporter:metrics"
+    "host:business-scoped service and container log files",
+    "host:systemd journal (read-only)"
   ],
   "outputs": [
-    "prometheus:metrics",
-    "loki:logs",
-    "tempo:traces"
+    "loki:logs (mTLS push)"
   ],
   "controls": [
-    "collection and routing only; no privileged application writes",
-    "drop prohibited high-cardinality and PII labels",
-    "native UI and receivers stay private",
-    "backpressure and retry must not cross tenant boundaries"
+    "codestra/config.alloy collects files and journal logs only; no metrics scrape or OTLP receiver pipeline is configured",
+    "the private HTTP boundary on 12345 forwards allowed read routes to the loopback native listener on 12346",
+    "native reload and support routes are denied at the boundary",
+    "configured redaction and drop stages apply before Loki delivery; tenant authority is operator-configured CODESTRA_BUSINESS"
   ],
   "identity": {
     "authority": "appolon1908-hue/Keycloak",

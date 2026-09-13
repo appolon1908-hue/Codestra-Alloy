@@ -22,6 +22,7 @@ fi
 source_sha="${1:?exact source SHA is required}"
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
 test "$(git rev-parse HEAD)" = "$source_sha"
+bash scripts/prepare_ci_disk.sh
 tag="local/codestra-alloy:${source_sha}"
 
 docker build \

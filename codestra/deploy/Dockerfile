@@ -10,7 +10,9 @@ ARG ALLOY_BASE_IMAGE
 FROM ${GO_BUILDER_IMAGE} AS alloy-builder
 COPY upstream /src/upstream
 WORKDIR /src/upstream/collector
-RUN CGO_ENABLED=1 GOOS=linux go build \
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=1 GOOS=linux go build -p=2 \
       -buildvcs=false \
       -trimpath \
       -tags='promtail_journal_enabled' \

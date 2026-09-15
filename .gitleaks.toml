@@ -1,0 +1,14 @@
+title = "Codestra Alloy build-context secret policy"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Official upstream documentation and non-runtime test fixtures excluded by .dockerignore"
+paths = [
+  '''^upstream/docs/''',
+  '''^upstream/integration-tests/''',
+  '''^upstream/.*/testdata[^/]*/''',
+  '''^upstream/.*_test\.go$''',
+  '''^upstream/internal/pipelinetest/'''
+]

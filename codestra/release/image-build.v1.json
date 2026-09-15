@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0.0",
+  "imageId": "alloy",
+  "dockerfile": "codestra/deploy/Dockerfile",
+  "context": ".",
+  "buildArgs": {
+    "ALLOY_BASE_IMAGE": "docker.io/grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+    "GO_BUILDER_IMAGE": "docker.io/grafana/alloy-build-image@sha256:9fa2a341b53503ce42cf9900c401d689a68ea67cdec6a20f53d72e3665fb8dc6"
+  },
+  "license": "Apache-2.0",
+  "description": "Source-built private Grafana Alloy agent with bounded Codestra telemetry routing and redaction.",
+  "productionActivation": false
+}

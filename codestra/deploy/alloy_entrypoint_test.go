@@ -27,7 +27,7 @@ func TestBoundaryAllowsOnlyReadOnlyHealthAndMetrics(t *testing.T) {
 	boundary := httptest.NewServer(handler)
 	defer boundary.Close()
 
-	for _, path := range []string{"/-/healthy", "/-/ready", "/metrics"} {
+	for _, path := range []string{"/-/healthy", "/-/ready", "/health", "/ready", "/metrics"} {
 		req, err := http.NewRequest(http.MethodGet, boundary.URL+path, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -48,6 +48,42 @@ func TestBoundaryAllowsOnlyReadOnlyHealthAndMetrics(t *testing.T) {
 	}
 	if receivedAuthorization != "" || receivedCookie != "" {
 		t.Fatal("the boundary forwarded caller credentials")
+	}
+}
+
+func TestBoundaryMapsMiddlewareAliasesToNativeHealthEndpoints(t *testing.T) {
+	var receivedPaths []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPaths = append(receivedPaths, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	handler, err := newBoundaryHandler(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary := httptest.NewServer(handler)
+	defer boundary.Close()
+
+	for _, test := range []struct {
+		alias  string
+		target string
+	}{
+		{"/health", "/-/healthy"},
+		{"/ready", "/-/ready"},
+	} {
+		response, err := http.Get(boundary.URL + test.alias)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s returned %d", test.alias, response.StatusCode)
+		}
+	}
+	if strings.Join(receivedPaths, ",") != "/-/healthy,/-/ready" {
+		t.Fatalf("native paths = %q", receivedPaths)
 	}
 }
 

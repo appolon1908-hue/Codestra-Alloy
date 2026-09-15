@@ -1,10 +1,10 @@
 from __future__ import annotations
-import json, subprocess, unittest
+import json, shutil, subprocess, sys, unittest
 from pathlib import Path
 import yaml
 ROOT=Path(__file__).resolve().parents[1]
 class ReadinessTests(unittest.TestCase):
-    def test_validator(self)->None: subprocess.run(["python3","scripts/validate_repository_readiness.py"],cwd=ROOT,check=True)
+    def test_validator(self)->None: subprocess.run([sys.executable, "scripts/validate_repository_readiness.py"], cwd=ROOT, check=True)
     def test_release_job_is_structurally_pinned(self)->None:
         job=yaml.safe_load((ROOT/".github/workflows/release-image.yml").read_text())["jobs"]["release"]
         self.assertEqual(job["with"]["image_id"],"alloy"); self.assertTrue(job["uses"].endswith("@9a6aebb849bbc068105c10d9d1dfd39ebf6f78bd"))
@@ -20,6 +20,8 @@ class ReadinessTests(unittest.TestCase):
         self.assertIn(".dockerfile | select",helper)
         self.assertIn(".context | select",helper)
         self.assertIn('--file "$dockerfile"',helper)
+        if shutil.which("bash") is None:
+            self.skipTest("requires bash to validate the locked-image build helper")
         subprocess.run(["bash","scripts/build_and_inspect_locked_image.sh","--validate-manifest"],cwd=ROOT,check=True)
     def test_private_http_boundary_is_built_and_configured(self)->None:
         compose=yaml.safe_load((ROOT/"codestra/deploy/compose.candidate.yaml").read_text())

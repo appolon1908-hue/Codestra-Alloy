@@ -26,6 +26,8 @@ const (
 var allowedPaths = map[string]struct{}{
 	"/-/healthy": {},
 	"/-/ready":   {},
+	"/health":    {},
+	"/ready":     {},
 	"/metrics":   {},
 }
 
@@ -80,12 +82,13 @@ func (h *boundaryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	target := *h.target
-	target.Path = r.URL.Path
+	target.Path = nativePath(r.URL.Path)
 	request, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), nil)
 	if err != nil {
 		http.Error(w, "native endpoint unavailable", http.StatusBadGateway)
 		return
 	}
+
 	response, err := h.client.Do(request)
 	if err != nil {
 		http.Error(w, "native endpoint unavailable", http.StatusBadGateway)
@@ -104,6 +107,17 @@ func (h *boundaryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(response.StatusCode)
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(body)
+	}
+}
+
+func nativePath(path string) string {
+	switch path {
+	case "/health":
+		return "/-/healthy"
+	case "/ready":
+		return "/-/ready"
+	default:
+		return path
 	}
 }
 

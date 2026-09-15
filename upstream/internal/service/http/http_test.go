@@ -2,7 +2,6 @@ package http
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,55 +51,6 @@ func TestHTTP(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
-	for _, endpoint := range []string{
-		"/internal/observability/v1/info",
-		"/internal/observability/v1/status",
-		"/internal/observability/v1/dependencies",
-		"/internal/observability/v1/capabilities",
-		"/internal/observability/v1/build",
-	} {
-		endpoint := endpoint
-		t.Run(endpoint, func(t *testing.T) {
-			cli, err := config.NewClientFromConfig(config.HTTPClientConfig{}, "test")
-			require.NoError(t, err)
-
-			req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s%s", env.ListenAddr(), endpoint), nil)
-			require.NoError(t, err)
-
-			resp, err := cli.Do(req)
-			require.NoError(t, err)
-			defer resp.Body.Close()
-			require.Equal(t, http.StatusOK, resp.StatusCode)
-			require.Equal(t, "application/json", resp.Header.Get("Content-Type"))
-			if endpoint == "/internal/observability/v1/build" {
-				var build map[string]string
-				require.NoError(t, json.NewDecoder(resp.Body).Decode(&build))
-				require.Equal(t, "test-alloy", build["service_id"])
-				require.Equal(t, "1.2.3", build["service_version"])
-				require.Equal(t, "staging", build["environment"])
-				require.Equal(t, "abc123", build["git_sha"])
-				require.Equal(t, "build-7", build["build_id"])
-			}
-		})
-	}
-
-	util.Eventually(t, func(t require.TestingT) {
-		cli, err := config.NewClientFromConfig(config.HTTPClientConfig{}, "test")
-		require.NoError(t, err)
-
-		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/ready", env.ListenAddr()), nil)
-		require.NoError(t, err)
-
-		resp, err := cli.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		buf, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
-		require.Equal(t, "Alloy is ready.\n", string(buf))
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-	})
-
 	util.Eventually(t, func(t require.TestingT) {
 		cli, err := config.NewClientFromConfig(config.HTTPClientConfig{}, "test")
 		require.NoError(t, err)
@@ -116,23 +66,6 @@ func TestHTTP(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "All Alloy components are healthy.\n", string(buf))
 
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-	})
-
-	util.Eventually(t, func(t require.TestingT) {
-		cli, err := config.NewClientFromConfig(config.HTTPClientConfig{}, "test")
-		require.NoError(t, err)
-
-		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/health", env.ListenAddr()), nil)
-		require.NoError(t, err)
-
-		resp, err := cli.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		buf, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
-		require.Equal(t, "All Alloy components are healthy.\n", string(buf))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 }
@@ -414,12 +347,6 @@ func newTestEnvironment(t *testing.T) (*testEnvironment, error) {
 		Logger:   util.TestAlloyLogger(t),
 		Tracer:   noop.NewTracerProvider(),
 		Gatherer: prometheus.NewRegistry(),
-
-		ServiceID:      "test-alloy",
-		ServiceVersion: "1.2.3",
-		Environment:    "staging",
-		GitSHA:         "abc123",
-		BuildID:        "build-7",
 
 		ReadyFunc:  func() bool { return true },
 		ReloadFunc: func() error { return nil },

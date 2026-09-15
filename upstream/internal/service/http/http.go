@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -53,12 +52,6 @@ type Options struct {
 
 	ReadyFunc  func() bool
 	ReloadFunc func() error
-
-	ServiceID      string
-	ServiceVersion string
-	Environment    string
-	GitSHA         string
-	BuildID        string
 
 	HTTPListenAddr   string                // Address to listen for HTTP traffic on.
 	MemoryListenAddr string                // Address to accept in-memory traffic on.
@@ -131,12 +124,6 @@ func New(opts Options) *Service {
 	}
 	if r == nil {
 		r = prometheus.NewRegistry()
-	}
-	if opts.ServiceID == "" {
-		opts.ServiceID = "grafana-alloy"
-	}
-	if opts.Environment == "" {
-		opts.Environment = "unknown"
 	}
 
 	var (
@@ -224,9 +211,9 @@ func (s *Service) Run(ctx context.Context, host service.Host) error {
 		})
 	})
 
-	// The health endpoint is inspired by the "/components" web API endpoint
-	// in /internal/web/api/api.go.
-	healthHandler := func(w http.ResponseWriter, r *http.Request) {
+	// The implementation for "/-/healthy" is inspired by
+	// the "/components" web API endpoint in /internal/web/api/api.go
+	r.HandleFunc("/-/healthy", func(w http.ResponseWriter, r *http.Request) {
 		components, err := host.ListComponents("", component.InfoOptions{
 			GetHealth: true,
 		})
@@ -248,66 +235,7 @@ func (s *Service) Run(ctx context.Context, host service.Host) error {
 
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintln(w, "All Alloy components are healthy.")
-	}
-	r.HandleFunc("/-/healthy", healthHandler)
-	r.HandleFunc("/health", healthHandler)
-
-	writeJSON := func(w http.ResponseWriter, status int, value any) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		if err := json.NewEncoder(w).Encode(value); err != nil {
-			s.log.Error("failed to encode observability response", "err", err)
-		}
-	}
-	r.HandleFunc("/internal/observability/v1/info", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"service_id":      s.opts.ServiceID,
-			"service_version": s.opts.ServiceVersion,
-			"environment":     s.opts.Environment,
-			"status":          "healthy",
-		})
-	}).Methods(http.MethodGet)
-	r.HandleFunc("/internal/observability/v1/status", func(w http.ResponseWriter, _ *http.Request) {
-		status := "healthy"
-		code := http.StatusOK
-		if !s.IsReady() {
-			status = "not_ready"
-			code = http.StatusServiceUnavailable
-		}
-		writeJSON(w, code, map[string]any{
-			"service_id":  s.opts.ServiceID,
-			"status":      status,
-			"ready":       s.IsReady(),
-			"environment": s.opts.Environment,
-		})
-	}).Methods(http.MethodGet)
-	r.HandleFunc("/internal/observability/v1/dependencies", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"service_id":   s.opts.ServiceID,
-			"dependencies": []string{"remotecfg"},
-		})
-	}).Methods(http.MethodGet)
-	r.HandleFunc("/internal/observability/v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"service_id": s.opts.ServiceID,
-			"capabilities": []string{
-				"metrics",
-				"logs",
-				"traces",
-				"prometheus_remote_write",
-				"otlp",
-			},
-		})
-	}).Methods(http.MethodGet)
-	r.HandleFunc("/internal/observability/v1/build", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"service_id":      s.opts.ServiceID,
-			"service_version": s.opts.ServiceVersion,
-			"environment":     s.opts.Environment,
-			"git_sha":         s.opts.GitSHA,
-			"build_id":        s.opts.BuildID,
-		})
-	}).Methods(http.MethodGet)
+	})
 
 	r.Handle(
 		"/metrics",
@@ -324,7 +252,7 @@ func (s *Service) Run(ctx context.Context, host service.Host) error {
 	r.PathPrefix(s.componentHttpPathPrefix).Handler(s.componentHandler(rootHostProvider(host), s.componentHttpPathPrefix))
 
 	if s.opts.ReadyFunc != nil {
-		readyHandler := func(w http.ResponseWriter, _ *http.Request) {
+		r.HandleFunc("/-/ready", func(w http.ResponseWriter, _ *http.Request) {
 			if s.opts.ReadyFunc() {
 				w.WriteHeader(http.StatusOK)
 				_, _ = fmt.Fprintln(w, "Alloy is ready.")
@@ -332,9 +260,7 @@ func (s *Service) Run(ctx context.Context, host service.Host) error {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				_, _ = fmt.Fprintln(w, "Alloy is not ready.")
 			}
-		}
-		r.HandleFunc("/-/ready", readyHandler)
-		r.HandleFunc("/ready", readyHandler)
+		})
 	}
 
 	if s.opts.ReloadFunc != nil {

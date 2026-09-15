@@ -67,11 +67,10 @@ func TestBoundaryMapsMiddlewareAliasesToNativeHealthEndpoints(t *testing.T) {
 	defer boundary.Close()
 
 	for _, test := range []struct {
-		alias  string
-		target string
+		alias string
 	}{
-		{"/health", "/-/healthy"},
-		{"/ready", "/-/ready"},
+		{"/health"},
+		{"/ready"},
 	} {
 		response, err := http.Get(boundary.URL + test.alias)
 		if err != nil {

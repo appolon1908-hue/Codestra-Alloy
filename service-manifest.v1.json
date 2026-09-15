@@ -1,0 +1,64 @@
+{
+  "apiVersion": "codestra.io/v1",
+  "kind": "Service",
+  "metadata": {
+    "id": "grafana-alloy",
+    "name": "Grafana Alloy",
+    "repository": "appolon1908-hue/Codestra-Alloy",
+    "type": "observability-collector"
+  },
+  "spec": {
+    "environments": [
+      "development",
+      "staging",
+      "production"
+    ],
+    "health": {
+      "liveness": "/health",
+      "readiness": "/ready"
+    },
+    "metrics": {
+      "enabled": true,
+      "path": "/metrics"
+    },
+    "logs": {
+      "enabled": true,
+      "structured": true
+    },
+    "tracing": {
+      "enabled": true,
+      "protocol": "otlp"
+    },
+    "identity": {
+      "provider": "keycloak"
+    },
+    "secrets": {
+      "provider": "openbao"
+    },
+    "dependencies": [
+      "remotecfg"
+    ],
+    "observability": {
+      "prometheus": true,
+      "alloy": true,
+      "loki": true,
+      "tempo": true,
+      "grafana": true,
+      "alertmanager": true
+    },
+    "internal_observability": {
+      "base_path": "/internal/observability/v1",
+      "endpoints": [
+        "info",
+        "status",
+        "dependencies",
+        "capabilities",
+        "build"
+      ]
+    },
+    "control_plane": {
+      "owner": "appolon1908-hue/Middleware-",
+      "base_path": "/platform/v1"
+    }
+  }
+}

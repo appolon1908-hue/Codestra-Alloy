@@ -6,6 +6,7 @@ This repository is included in the shared design for **63 repositories and 17 mo
 - [36-operation Middleware implementation](https://github.com/appolon1908-hue/Middleware-/tree/cedaa23b89f84f365ae6789413411c3f01516952/app/monitoring)
 - [Executable API contract](https://raw.githubusercontent.com/appolon1908-hue/Middleware-/cedaa23b89f84f365ae6789413411c3f01516952/contracts/observability/integrated-monitoring.openapi.json)
 - Local machine-readable onboarding record: [monitoring-integration.v1.json](monitoring-integration.v1.json)
+- Canonical Alloy service contract: [service-manifest.v1.json](service-manifest.v1.json)
 
 Middleware owns the monitoring API and remains the cross-system operational write boundary. Prometheus owns metrics, Loki logs, Tempo traces, Alertmanager routing, Backstage catalog discovery, Sentry application errors and Wazuh security observations. Grafana provides operational drilldowns. These responsibilities extend the existing collection pipeline without creating another writer or duplicating collectors.
 
@@ -15,4 +16,4 @@ The release controller mounts reviewed configuration and artifacts in Middleware
 
 Keep native backends private. Send UI reads through authenticated Middleware/BFF routes, never browser-held backend credentials. Use release-mounted secrets, approved targets/query templates, tenant and campaign scopes, and structured redacted telemetry. Service registration, green CI and successful ingestion are distinct from verified production coverage.
 
-Acceptance requires the exact source CI result, approved immutable release, registered service/endpoint contracts, fresh telemetry, private authentication, a synthetic alert and recovery evidence. Production activation remains separate. This commit adds the repository's design/onboarding record; it does not instrument or deploy its application.
+Acceptance requires the exact source CI result, approved immutable release, registered service/endpoint contracts, fresh telemetry, private authentication, a synthetic alert and recovery evidence. Production activation remains separate. Alloy exposes `/health`, `/ready`, `/metrics`, and read-only `/internal/observability/v1/{info,status,dependencies,capabilities,build}` endpoints. Build identity is supplied through HTTP service options so release metadata can be injected without hard-coding deployment values; the `/platform/v1` control plane remains owned by Middleware.

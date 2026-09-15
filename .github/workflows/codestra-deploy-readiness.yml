@@ -32,7 +32,7 @@ jobs:
     with:
       repository_class: observability-overlay
       runtime_deployable: true
-      health_paths: "/-/ready,/metrics"
+      health_paths: "/health,/ready,/metrics"
       operation: ${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'verify' }}
       confirmation: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation || '' }}
       canary_percent: ${{ github.event_name == 'workflow_dispatch' && inputs.canary_percent || '1' }}

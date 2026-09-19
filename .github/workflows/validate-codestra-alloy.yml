@@ -64,9 +64,12 @@ jobs:
           python -m py_compile \
             scripts/validate_codestra_alloy.py \
             scripts/validate_codestra_alloy_corporate.py \
-            scripts/validate_codestra_alloy_staging_review.py
+            scripts/validate_codestra_alloy_staging_review.py \
+            scripts/validate_middleware_v3_log_redaction.py
           python scripts/validate_codestra_alloy_corporate.py
           python scripts/validate_codestra_alloy_staging_review.py
+          python scripts/validate_middleware_v3_log_redaction.py
+          python -m unittest tests/test_middleware_v3_log_redaction.py
 
       - name: Reconstruct official sanitized source tree
         shell: bash

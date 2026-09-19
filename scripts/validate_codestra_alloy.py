@@ -342,14 +342,17 @@ def validate_alloy_config() -> None:
     # Structured metadata is not an indexed label; the bounded identifier set below is the
     # only place trace/correlation identifiers may be assigned, and never inside stage.labels.
     metadata_blocks = re.findall(r"stage\.structured_metadata\s*\{\s*values\s*=\s*\{(.*?)\}\s*\}", text, flags=re.DOTALL)
-    allowed_metadata = {"correlation_id", "trace_id", "span_id", "audit_type", "audit_operation", "audit_error"}
+    allowed_metadata = {
+        "correlation_id", "trace_id", "span_id", "operation_id", "deployment_sha",
+        "audit_type", "audit_operation", "audit_error",
+    }
     for block in metadata_blocks:
         names = set(re.findall(r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=", block, flags=re.MULTILINE))
         if not names <= allowed_metadata:
             fail(f"unreviewed structured metadata: {sorted(names - allowed_metadata)}")
     without_metadata = re.sub(r"stage\.(structured_metadata|json)\s*\{.*?\}\s*\}", "", text, flags=re.DOTALL)
     if re.search(
-        r"(?m)^\s*(trace_id|correlation_id|request_id|customer_id|user_id|email|phone)\s*=",
+        r"(?m)^\s*(trace_id|correlation_id|operation_id|command_id|request_id|customer_id|user_id|email|phone)\s*=",
         without_metadata,
     ):
         fail("high-cardinality or personal fields may not be assigned as stream labels")

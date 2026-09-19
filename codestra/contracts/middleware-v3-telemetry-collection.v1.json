@@ -1,0 +1,277 @@
+{
+  "schema_version": "1.0",
+  "contract_id": "middleware-v3-telemetry-collection",
+  "lane": "E",
+  "status": "PREPARED_DISABLED",
+  "activation_enabled": false,
+  "provider_effects_enabled": false,
+  "purpose": "Unified telemetry collection and transport for Middleware V3: Alloy tails service, container, journal and OpenBao audit logs on each host, redacts before anything leaves the host, keeps stream labels bounded and ships to Loki over mutual TLS. Correlation identifiers travel as structured metadata, never as labels.",
+  "middleware": {
+    "repository": "appolon1908-hue/Middleware-",
+    "prep_base_sha": "22d023a9c65b0789a0f7ee6c28548753521a9eff",
+    "v3_final_sha": "PENDING",
+    "repin_required_after_v3_merge": true,
+    "v3_candidate_observed": {
+      "branch": "mission/middleware-v3-command-kernel-20260919",
+      "sha": "1acb2ae",
+      "authority": "informational only; unmerged, owned by the Middleware V3 session"
+    }
+  },
+  "flow": {
+    "logs": "applications/exporters (files, docker json-file, journald) -> Alloy loki.process (labels, structured metadata, redact) -> Loki (mTLS)",
+    "openbao_audit": "OpenBao file audit device (read-only mount) -> Alloy openbao_audit pipeline -> redact -> Loki",
+    "traces_and_otlp": "Middleware OTel SDK -> Codestra-Telemetry collector agent (127.0.0.1:4317/4318) -> central gateway -> Tempo; Alloy carries no OTLP receiver in this profile",
+    "redaction_point": "on the producing host, before transport (loki.process \"redact\" is the only path to loki.write)"
+  },
+  "required_common_fields": {
+    "service_id": {
+      "carried_as": "stream_label",
+      "label": "service",
+      "source": "/var/log/codestra/<application>/<service>/ path or compose service label",
+      "cardinality": "bounded: one value per deployed service"
+    },
+    "environment": {
+      "carried_as": "stream_label",
+      "label": "environment",
+      "source": "CODESTRA_ENVIRONMENT",
+      "cardinality": "development|test|staging|production"
+    },
+    "deployment_sha": {
+      "carried_as": "structured_metadata",
+      "source": "JSON field deployment_sha emitted by the runtime",
+      "cardinality": "one value per deployment; never a label"
+    },
+    "correlation_id": {
+      "carried_as": "structured_metadata",
+      "source": "JSON field correlation_id (X-Correlation-ID)",
+      "cardinality": "per request; never a label"
+    },
+    "operation_id": {
+      "carried_as": "structured_metadata",
+      "source": "JSON field operation_id (V3 kernel operation)",
+      "cardinality": "per operation; never a label"
+    },
+    "trace_id": {
+      "carried_as": "structured_metadata",
+      "source": "JSON field trace_id (W3C trace-id); span_id alongside",
+      "cardinality": "per trace; never a label"
+    }
+  },
+  "label_policy": {
+    "stream_labels_allowed": [
+      "codestra_business",
+      "application",
+      "service",
+      "environment",
+      "server",
+      "region",
+      "deployment",
+      "log_source",
+      "level",
+      "detected_level"
+    ],
+    "dynamic_label_stages": "exactly two (application, service) derived from the governed log path",
+    "never_labels": [
+      "tenant_id",
+      "customer_id",
+      "account_id",
+      "user_id",
+      "email",
+      "phone",
+      "command_id",
+      "operation_id",
+      "correlation_id",
+      "trace_id",
+      "span_id",
+      "request_id",
+      "message_id",
+      "order_id",
+      "path",
+      "url",
+      "filename",
+      "container_id",
+      "image_id",
+      "pod_uid",
+      "process_pid"
+    ],
+    "structured_metadata_allowed": [
+      "correlation_id",
+      "trace_id",
+      "span_id",
+      "operation_id",
+      "deployment_sha",
+      "audit_type",
+      "audit_operation",
+      "audit_error"
+    ]
+  },
+  "redaction": {
+    "stage": "loki.process \"redact\" in codestra/config.alloy",
+    "replayed_by": "scripts/validate_middleware_v3_log_redaction.py (corpus of planted credentials; every class must be removed and no drilldown field damaged)",
+    "classes": {
+      "authorization_headers": {
+        "forms": [
+          "Authorization: Bearer ...",
+          "Authorization: Basic ...",
+          "\"authorization\":\"...\"",
+          "authorization=..."
+        ],
+        "config_tokens": [
+          "Bearer [REDACTED]",
+          "Basic [REDACTED]",
+          "authorization|proxy_authorization"
+        ]
+      },
+      "cookies": {
+        "forms": [
+          "Cookie:",
+          "Set-Cookie:",
+          "\"cookie\":\"...\""
+        ],
+        "config_tokens": [
+          "cookie|set-cookie"
+        ]
+      },
+      "jwt": {
+        "forms": [
+          "eyJ...eyJ...sig anywhere in the line"
+        ],
+        "config_tokens": [
+          "[REDACTED_JWT]"
+        ]
+      },
+      "api_keys": {
+        "forms": [
+          "api_key",
+          "api-key",
+          "x-api-key",
+          "<provider>_api_key",
+          "apikey"
+        ],
+        "config_tokens": [
+          "api[_-]?key|apikey"
+        ]
+      },
+      "passwords": {
+        "forms": [
+          "password",
+          "passwd",
+          "<anything>_password (smtp_password, db_password, redis_password, postgres_password)",
+          "PASSWORD= environment dumps"
+        ],
+        "config_tokens": [
+          "password|passwd"
+        ]
+      },
+      "client_secret": {
+        "forms": [
+          "client_secret",
+          "Client-Secret:",
+          "<anything>_client_secret",
+          "<anything>_secret"
+        ],
+        "config_tokens": [
+          "client[_-]?secret"
+        ]
+      },
+      "openbao_tokens": {
+        "forms": [
+          "hvs.*",
+          "hvb.*",
+          "s.<24+>",
+          "b.<64+>",
+          "X-Vault-Token",
+          "X-OpenBao-Token",
+          "openbao_token",
+          "vault_token",
+          "bao_token"
+        ],
+        "config_tokens": [
+          "[REDACTED_OPENBAO_TOKEN]",
+          "x-vault-token|x-openbao-token"
+        ]
+      },
+      "database_credentials": {
+        "forms": [
+          "database_url",
+          "dsn",
+          "connection_string",
+          "postgres://user:pass@",
+          "redis://:pass@",
+          "db_password"
+        ],
+        "config_tokens": [
+          "database_url|dsn",
+          "$1:[REDACTED]@"
+        ]
+      },
+      "smtp_credentials": {
+        "forms": [
+          "smtp_password",
+          "SMTP_PASSWORD=",
+          "smtp://user:pass@"
+        ],
+        "config_tokens": [
+          "$1:[REDACTED]@",
+          "password|passwd"
+        ]
+      },
+      "provider_credentials": {
+        "forms": [
+          "provider_api_key",
+          "<provider>_api_key",
+          "provider_credentials (object -> line dropped)",
+          "aws_secret_access_key",
+          "webhook_signing_secret",
+          "signing_key"
+        ],
+        "config_tokens": [
+          "signing[_-]?key|access[_-]?key",
+          "complex_sensitive_json_value"
+        ]
+      },
+      "private_keys": {
+        "forms": [
+          "-----BEGIN ... PRIVATE KEY-----",
+          "private_key fields"
+        ],
+        "config_tokens": [
+          "private_key_material"
+        ]
+      },
+      "personal_data": {
+        "forms": [
+          "e-mail addresses anywhere",
+          "email/phone JSON fields"
+        ],
+        "config_tokens": [
+          "[REDACTED_EMAIL]"
+        ]
+      }
+    },
+    "preserved_for_drilldown": [
+      "secret_ref",
+      "secret_class",
+      "rotation_status",
+      "lease_id_hash",
+      "token_type",
+      "token_count",
+      "idempotency_key",
+      "correlation_id",
+      "operation_id",
+      "trace_id",
+      "deployment_sha"
+    ]
+  },
+  "transport": {
+    "loki_endpoint": "https://loki-gateway (mutual TLS: /run/secrets/loki_ca, alloy_client_cert, alloy_client_key)",
+    "tenant": "X-Scope-OrgID from the environment",
+    "credentials": "OpenBao secret references only (codestra/secret-references.v1.json, workload alloy-collector)",
+    "listeners": "no inbound listener beyond the local Alloy UI/health bound to the private network"
+  },
+  "v3_expectations": [
+    "Middleware V3 emits JSON logs with service_id, environment, deployment_sha, correlation_id, operation_id, trace_id and span_id; operation_id/deployment_sha are picked up by the service_files stage.json and stored as structured metadata",
+    "No V3 log line carries a resolved secret; the redaction stage is defence in depth, not the primary control",
+    "Re-pin middleware.v3_final_sha and re-run scripts/validate_middleware_v3_log_redaction.py against a V3 log sample"
+  ]
+}

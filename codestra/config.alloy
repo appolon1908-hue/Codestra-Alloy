@@ -107,6 +107,8 @@ loki.process "service_files" {
 			correlation_id = "correlation_id",
 			trace_id       = "trace_id",
 			span_id        = "span_id",
+			operation_id   = "operation_id",
+			deployment_sha = "deployment_sha",
 		}
 	}
 
@@ -115,6 +117,8 @@ loki.process "service_files" {
 			correlation_id = "",
 			trace_id       = "",
 			span_id        = "",
+			operation_id   = "",
+			deployment_sha = "",
 		}
 	}
 
@@ -240,6 +244,23 @@ loki.process "redact" {
 		replace    = "Bearer [REDACTED]"
 	}
 
+	// Credentials embedded in connection URLs (postgres://, redis://, smtp://, amqp://, https://)
+	// and HTTP Basic credentials never reach Loki.
+	stage.replace {
+		expression = `(?i)\b([a-z][a-z0-9+.-]*://[^/\s:@"']*):([^@\s/"']+)@`
+		replace    = "$1:[REDACTED]@"
+	}
+
+	stage.replace {
+		expression = `(?i)\bBasic\s+[A-Za-z0-9+/=]{16,}`
+		replace    = "Basic [REDACTED]"
+	}
+
+	stage.replace {
+		expression = `\bb\.[A-Za-z0-9_-]{64,}`
+		replace    = "[REDACTED_OPENBAO_TOKEN]"
+	}
+
 	// OpenBao service/batch tokens and any JWT-shaped value never reach Loki,
 	// whatever field name carried them.
 	stage.replace {
@@ -279,6 +300,26 @@ loki.process "redact" {
 
 	stage.drop {
 		expression          = `(?i)"(?:authorization|proxy_authorization|cookie|set-cookie|x-vault-token|x-openbao-token|vault_token|openbao_token|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|id_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret)|tenant_id|tenant_name|organization_id|organization_name|customer_id|customer_name|account_id|user_id|user_name|email|phone|message_id|order_id|workflow_id|execution_id|request\.body|response\.body|http\.request\.body|http\.response\.body|db\.statement)"\s*:\s*[\[{]`
+		drop_counter_reason = "complex_sensitive_json_value"
+	}
+
+	// Middleware V3 preparation: compound credential names (smtp_password, db_password,
+	// provider_api_key, x-api-key, bao_token, aws_secret_access_key, ...) are matched by
+	// suffix so no SMTP, database, provider or OpenBao credential survives under a prefix
+	// the exact-key stages above do not list. Reference metadata (secret_ref, secret_class,
+	// lease_id_hash, token_type) ends differently and is kept for drilldown.
+	stage.replace {
+		expression = `(?i)("[a-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|apikey|private[_-]?key|credentials?|dsn|database[_-]?url|connection[_-]?string|signing[_-]?key|access[_-]?key|client[_-]?secret)"\s*:\s*")[^"]*(")`
+		replace    = "$1[REDACTED]$2"
+	}
+
+	stage.replace {
+		expression = `(?i)\b([a-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|apikey|private[_-]?key|credentials?|dsn|database[_-]?url|connection[_-]?string|signing[_-]?key|access[_-]?key|client[_-]?secret))\s*[=:]\s*[^\s,&;"']+`
+		replace    = "$1=[REDACTED]"
+	}
+
+	stage.drop {
+		expression          = `(?i)"[a-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|apikey|private[_-]?key|credentials?|dsn|database[_-]?url|connection[_-]?string|signing[_-]?key|access[_-]?key|client[_-]?secret)"\s*:\s*[\[{]`
 		drop_counter_reason = "complex_sensitive_json_value"
 	}
 

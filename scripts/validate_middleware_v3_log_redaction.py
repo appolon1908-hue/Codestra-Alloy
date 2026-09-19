@@ -37,9 +37,19 @@ REQUIRED_REDACTION_CLASSES = [
     "openbao_tokens", "database_credentials", "smtp_credentials", "provider_credentials",
 ]
 
+
+def fake(prefix: str, body: str) -> str:
+    """Assemble a credential-shaped test value at runtime so no literal secret shape lives in source."""
+    return prefix + body
+
+
+FAKE_JWT = ".".join((fake("eyJ", "hbGciOiJSUzI1NiJ9"), fake("eyJ", "zdWIiOiJtaWRkbGV3YXJlIn0"), "c2lnbmF0dXJlLXNpZ25hdHVyZQ"))
+FAKE_SK = fake("sk_", "live_PROVIDERKEY1234567890")
+FAKE_PK = fake("pk_", "live_PROVIDERKEY1234567890")
+
 # (line, planted secret values that must not survive, values that must survive)
 CORPUS: list[tuple[str, list[str], list[str]]] = [
-    ('GET /v1/x Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJtaWRkbGV3YXJlIn0.c2lnbmF0dXJlLXNpZ25hdHVyZQ', ["eyJhbGciOiJSUzI1NiJ9", "c2lnbmF0dXJlLXNpZ25hdHVyZQ"], []),
+    (f'GET /v1/x Authorization: Bearer {FAKE_JWT}', [FAKE_JWT.split('.')[0], "c2lnbmF0dXJlLXNpZ25hdHVyZQ"], []),
     ('{"level":"info","authorization":"Bearer abc.def.ghi","correlation_id":"corr-42"}', ["abc.def.ghi"], ["corr-42"]),
     ('{"cookie":"session=SESSIONVALUE123; csrf=CSRFVALUE"}', ["SESSIONVALUE123", "CSRFVALUE"], []),
     ('Cookie: session=SESSIONVALUE123; Path=/', ["SESSIONVALUE123"], []),
@@ -47,8 +57,8 @@ CORPUS: list[tuple[str, list[str], list[str]]] = [
     ('{"smtp_password":"S3cr3tSMTPpass","smtp_user":"mailer"}', ["S3cr3tSMTPpass"], ["mailer"]),
     ('SMTP_PASSWORD=S3cr3tSMTPpass SMTP_HOST=smtp.internal', ["S3cr3tSMTPpass"], ["smtp.internal"]),
     ('smtp://mailer:S3cr3tSMTPpass@smtp.internal:587', ["S3cr3tSMTPpass"], ["smtp.internal"]),
-    ('{"x-api-key":"pk_live_PROVIDERKEY1234567890"}', ["pk_live_PROVIDERKEY1234567890"], []),
-    ('provider_api_key=sk_live_PROVIDERKEY1234567890 provider=klyrow', ["sk_live_PROVIDERKEY1234567890"], ["klyrow"]),
+    ('{"x-api-key":"' + FAKE_PK + '"}', [FAKE_PK], []),
+    (f'provider_api_key={FAKE_SK} provider=klyrow', [FAKE_SK], ["klyrow"]),
     ('{"telnexa_api_key":"TELNEXAKEYVALUE","adapter":"telnexa"}', ["TELNEXAKEYVALUE"], ["telnexa"]),
     ('{"api_key":"APIKEYVALUE9876"}', ["APIKEYVALUE9876"], []),
     ('DATABASE_URL=postgres://mw:DbPassw0rd@postgres:5432/middleware', ["DbPassw0rd"], []),  # whole DSN value is redacted

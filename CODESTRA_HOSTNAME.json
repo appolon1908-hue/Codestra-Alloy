@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "service": "Grafana Alloy",
-  "repository": "appolon1908-hue/Codestra-Alloy",
+  "repository": "ingtrader21-spec/Codestra-Alloy",
   "canonical_hostname": "allo.codestra.media",
   "dns_record": {"type": "A", "value": "37.27.128.39"},
   "exposure": "private_only",

@@ -1,6 +1,6 @@
 # Codestra Grafana Alloy Authority
 
-Principal repository: `appolon1908-hue/Codestra-Alloy`
+Principal repository: `ingtrader21-spec/Codestra-Alloy`
 Canonical service host: `allo.codestra.media`
 Canonical DNS target: `37.27.128.39`
 TTL: `600`

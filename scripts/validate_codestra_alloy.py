@@ -87,6 +87,10 @@ FORBIDDEN_CONFIG_FRAGMENTS = (
 )
 REQUIRED_REDACTION_TOKENS = {
     "authorization",
+    "x-vault-token",
+    "x-openbao-token",
+    "hvs|hvb",
+    "eyj",
     "cookie",
     "password",
     "api[_-]?key",
@@ -335,11 +339,91 @@ def validate_alloy_config() -> None:
         if label_names != {"application", "service"}:
             fail(f"unsafe dynamic Alloy labels: {sorted(label_names)}")
 
+    # Structured metadata is not an indexed label; the bounded identifier set below is the
+    # only place trace/correlation identifiers may be assigned, and never inside stage.labels.
+    metadata_blocks = re.findall(r"stage\.structured_metadata\s*\{\s*values\s*=\s*\{(.*?)\}\s*\}", text, flags=re.DOTALL)
+    allowed_metadata = {"correlation_id", "trace_id", "span_id", "audit_type", "audit_operation", "audit_error"}
+    for block in metadata_blocks:
+        names = set(re.findall(r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=", block, flags=re.MULTILINE))
+        if not names <= allowed_metadata:
+            fail(f"unreviewed structured metadata: {sorted(names - allowed_metadata)}")
+    without_metadata = re.sub(r"stage\.(structured_metadata|json)\s*\{.*?\}\s*\}", "", text, flags=re.DOTALL)
     if re.search(
         r"(?m)^\s*(trace_id|correlation_id|request_id|customer_id|user_id|email|phone)\s*=",
-        text,
+        without_metadata,
     ):
         fail("high-cardinality or personal fields may not be assigned as stream labels")
+
+    if 'local.file_match "openbao_audit"' not in text or '"/var/log/openbao/openbao-audit*.jsonl"' not in text:
+        fail("Alloy config must tail the OpenBao audit device output from its read-only mount")
+    audit = re.search(r'local\.file_match "openbao_audit" \{(.*?)\n\}', text, flags=re.DOTALL)
+    if not audit or 'service           = "openbao"' not in audit.group(1) or 'log_source        = "openbao-audit"' not in audit.group(1):
+        fail("OpenBao audit stream must carry static bounded labels")
+    if "loki.process.openbao_audit" not in text or "forward_to = [loki.process.redact.receiver]" not in text:
+        fail("OpenBao audit stream must pass through the shared redaction stage")
+    if "REDACTED_OPENBAO_TOKEN" not in text or "REDACTED_JWT" not in text:
+        fail("OpenBao tokens and JWT-shaped values must be redacted before delivery")
+
+
+SECRET_REFERENCES = ROOT / "codestra" / "secret-references.v1.json"
+SECRET_SCHEMA = ROOT / "codestra" / "contracts" / "secret-reference.v1.schema.json"
+SECRET_SCHEMA_PIN = ROOT / "codestra" / "contracts" / "secret-reference.v1.schema.sha256"
+FORBIDDEN_REFERENCE_KEYS = {
+    "value", "password", "token", "private_key", "client_secret", "secret",
+    "secret_value", "unseal_key", "recovery_key", "root_token",
+}
+
+
+def reject_secret_material(value: Any, trail: str) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key).lower() in FORBIDDEN_REFERENCE_KEYS or str(key).lower().endswith(("_password", "_token", "_secret")):
+                fail(f"secret reference carries a value-bearing key at {trail}.{key}")
+            reject_secret_material(item, f"{trail}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            reject_secret_material(item, f"{trail}[{index}]")
+    elif isinstance(value, str) and (value.startswith("hvs.") or "PRIVATE KEY" in value):
+        fail(f"secret-shaped value at {trail}")
+
+
+def validate_secret_references() -> None:
+    """Every /run/secrets file config.alloy reads is the rendering of an OpenBao reference."""
+    import hashlib
+
+    schema = load_json(SECRET_SCHEMA)
+    pin = SECRET_SCHEMA_PIN.read_text(encoding="utf-8").strip()
+    if hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest() != pin:
+        fail("vendored secret-reference schema does not match its pin")
+    document = load_json(SECRET_REFERENCES)
+    if document.get("secretValuesIncluded") is not False or document.get("schemaSha256") != pin:
+        fail("secret references must declare no values and bind the pinned schema")
+    if document.get("authority", {}).get("workloadIdentity") != "alloy-collector":
+        fail("Alloy reads OpenBao only as the alloy-collector identity")
+    reject_secret_material(document, "secret-references")
+    covered: set[str] = set()
+    environments: set[str] = set()
+    for index, reference in enumerate(document.get("references", [])):
+        trail = f"references[{index}]"
+        for required in schema["required"]:
+            if required not in reference:
+                fail(f"{trail} missing {required}")
+        env = reference["environment"]
+        ref = reference["secret_ref"]
+        if reference["provider"] != "openbao" or reference["workload_identity"] != "alloy-collector":
+            fail(f"{trail} must be an openbao reference readable by alloy-collector")
+        if not ref.startswith(f"codestra/{env}/observability/alloy/"):
+            fail(f"{trail} must lie beneath the alloy prefix for {env}")
+        if reference.get("reference_uri") != "openbao://" + ref:
+            fail(f"{trail} reference_uri must equal openbao:// + secret_ref")
+        environments.add(env)
+        covered.update(reference.get("runtime_files", []))
+    if environments != {"staging", "production"}:
+        fail("secret references must cover exactly staging and production")
+    text = require_file(CONFIG)
+    for path in sorted(set(re.findall(r"/run/secrets/[a-z_]+", text))):
+        if path not in covered:
+            fail(f"Alloy secret file has no OpenBao reference: {path}")
 
 
 def validate_compose() -> None:
@@ -595,6 +679,7 @@ def validate_secret_safety() -> None:
 def main() -> None:
     validate_runtime()
     validate_alloy_config()
+    validate_secret_references()
     validate_compose()
     validate_packaging_and_docs()
     validate_secret_safety()

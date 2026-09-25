@@ -117,9 +117,12 @@ def validate_alloy_config(module: ModuleType) -> None:
         if label_names != {"application", "service"}:
             module.fail(f"unsafe dynamic Alloy labels: {sorted(label_names)}")
 
+    # Structured metadata (bounded correlation/trace/audit identifiers) is not an indexed
+    # label; only stage.labels assignments are governed by the stream-label rule.
+    without_metadata = re.sub(r"stage\.(structured_metadata|json)\s*\{.*?\}\s*\}", "", text, flags=re.DOTALL)
     if re.search(
         r"(?m)^\s*(trace_id|correlation_id|request_id|customer_id|user_id|email|phone)\s*=",
-        text,
+        without_metadata,
     ):
         module.fail(
             "high-cardinality or personal fields may not be assigned as stream labels"

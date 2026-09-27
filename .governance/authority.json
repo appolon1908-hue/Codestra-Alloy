@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "repository": "Codestra-Alloy",
+  "repository_url": "https://github.com/ingtrader21-spec/Codestra-Alloy.git",
+  "active_branch": "governance/single-active-lane-20260926",
+  "base_branch": "main",
+  "base_sha": "9036019ece4bfedf0cc528f3ab590ce94ac7fc81",
+  "upstream_ref": "origin/main",
+  "publication_branch": "governance/single-active-lane-20260926",
+  "development_workstation": "codestra-desktop",
+  "publication_workstation": "Appolon",
+  "allow_production_effects": false,
+  "allow_force_push": false,
+  "canonical_worktree": "/home/codestra/Worktrees/Monitoring-Active-20260926/Codestra-Alloy",
+  "updated_at": "2026-09-26T16:37:17.137672+00:00"
+}

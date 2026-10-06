@@ -157,3 +157,11 @@ feature/* -> development -> test -> staging -> production -> main
 ```
 
 The runtime remains `CONFIG_PREPARED_NOT_DEPLOYED`. Merge or CI success does not change server ACLs, mount logs, issue certificates, create networks, expose a port, start Alloy or activate Loki ingestion.
+
+## OpenBao audit, credential redaction and drilldown identifiers (2026-09-16)
+
+- Alloy remains the log-file and journal agent; application OTLP stays with the OpenTelemetry Collector (`opentelemetryOwnsApplicationOtlp` unchanged). The per-host OTLP receiver is the Telemetry agent profile.
+- The OpenBao audit device output (`/var/log/openbao/openbao-audit*.jsonl`, mounted read-only only on the OpenBao host) is tailed with static bounded labels (`application=security`, `service=openbao`, `log_source=openbao-audit`); the audit type, operation and error travel as structured metadata and the stream passes through the shared redaction stage. OpenBao's own HMAC and redaction are preserved, never reversed or weakened.
+- OpenBao service/batch tokens (`hvs.`/`hvb.`/`s.`), JWT-shaped values and the `x-vault-token`/`x-openbao-token` header names are redacted before delivery, in addition to the existing credential, cookie, key and personal-data policy.
+- `correlation_id`, `trace_id` and `span_id` from JSON service logs become Loki structured metadata (never stream labels) so Grafana can drill from a trace or a Middleware incident into the matching log lines with bounded index cardinality; the intake services keep dropping those fields entirely.
+- Every `/run/secrets` file `config.alloy` reads is declared in `codestra/secret-references.v1.json` (identity `alloy-collector`) against the vendored, pinned secret-reference schema; nothing is committed.

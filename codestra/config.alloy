@@ -99,6 +99,25 @@ loki.process "service_files" {
 		values = ["filename"]
 	}
 
+	// Bounded opaque identifiers for log <-> trace <-> incident drilldown. They are
+	// structured metadata (not indexed labels) so cardinality stays bounded, and
+	// the redaction stage still drops them for the intake services.
+	stage.json {
+		expressions = {
+			correlation_id = "correlation_id",
+			trace_id       = "trace_id",
+			span_id        = "span_id",
+		}
+	}
+
+	stage.structured_metadata {
+		values = {
+			correlation_id = "",
+			trace_id       = "",
+			span_id        = "",
+		}
+	}
+
 	forward_to = [loki.process.redact.receiver]
 }
 
@@ -114,6 +133,61 @@ loki.process "docker_files" {
 		values = {
 			application = "",
 			service     = "",
+		}
+	}
+
+	stage.label_drop {
+		values = ["filename"]
+	}
+
+	forward_to = [loki.process.redact.receiver]
+}
+
+// OpenBao audit device output (JSON lines, HMAC-protected by OpenBao itself) is
+// mounted read-only only on the OpenBao host. Labels stay static and bounded;
+// the audit request type and operation travel as structured metadata, never as
+// stream labels. Nothing here reverses the HMAC or weakens the audit record.
+local.file_match "openbao_audit" {
+	path_targets = [
+		{
+			__path__          = "/var/log/openbao/openbao-audit*.jsonl",
+			codestra_business = sys.env("CODESTRA_BUSINESS"),
+			application       = "security",
+			service           = "openbao",
+			environment       = sys.env("CODESTRA_ENVIRONMENT"),
+			server            = sys.env("CODESTRA_SERVER"),
+			region            = sys.env("CODESTRA_REGION"),
+			deployment        = sys.env("CODESTRA_ALLOY_DEPLOYMENT_ID"),
+			log_source        = "openbao-audit",
+		},
+	]
+	sync_period = "10s"
+}
+
+loki.source.file "openbao_audit" {
+	targets    = local.file_match.openbao_audit.targets
+	forward_to = [loki.process.openbao_audit.receiver]
+
+	file_watch {
+		min_poll_frequency = "250ms"
+		max_poll_frequency = "1s"
+	}
+}
+
+loki.process "openbao_audit" {
+	stage.json {
+		expressions = {
+			audit_type      = "type",
+			audit_operation = "request.operation",
+			audit_error     = "error",
+		}
+	}
+
+	stage.structured_metadata {
+		values = {
+			audit_type      = "",
+			audit_operation = "",
+			audit_error     = "",
 		}
 	}
 
@@ -166,13 +240,30 @@ loki.process "redact" {
 		replace    = "Bearer [REDACTED]"
 	}
 
+	// OpenBao service/batch tokens and any JWT-shaped value never reach Loki,
+	// whatever field name carried them.
 	stage.replace {
-		expression = `(?i)("(?:authorization|proxy_authorization|cookie|set-cookie|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret))"\s*:\s*")[^"]*(")`
+		expression = `\b(?:hvs|hvb)\.[A-Za-z0-9_-]{20,}`
+		replace    = "[REDACTED_OPENBAO_TOKEN]"
+	}
+
+	stage.replace {
+		expression = `\bs\.[A-Za-z0-9]{24,}\b`
+		replace    = "[REDACTED_OPENBAO_TOKEN]"
+	}
+
+	stage.replace {
+		expression = `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`
+		replace    = "[REDACTED_JWT]"
+	}
+
+	stage.replace {
+		expression = `(?i)("(?:authorization|proxy_authorization|cookie|set-cookie|x-vault-token|x-openbao-token|vault_token|openbao_token|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|id_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret))"\s*:\s*")[^"]*(")`
 		replace    = "$1[REDACTED]$2"
 	}
 
 	stage.replace {
-		expression = `(?i)\b(authorization|proxy_authorization|cookie|set-cookie|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret))\s*[=:]\s*[^\s,&;]+`
+		expression = `(?i)\b(authorization|proxy_authorization|cookie|set-cookie|x-vault-token|x-openbao-token|vault_token|openbao_token|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|id_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret))\s*[=:]\s*[^\s,&;]+`
 		replace    = "$1=[REDACTED]"
 	}
 
@@ -182,12 +273,12 @@ loki.process "redact" {
 	}
 
 	stage.replace {
-		expression = `(?i)("(?:authorization|proxy_authorization|cookie|set-cookie|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret)|tenant_id|tenant_name|organization_id|organization_name|customer_id|customer_name|account_id|user_id|user_name|email|phone|message_id|order_id|workflow_id|execution_id|request\.body|response\.body|http\.request\.body|http\.response\.body|db\.statement)"\s*:\s*)(?:-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false|null)(\s*[,}])`
+		expression = `(?i)("(?:authorization|proxy_authorization|cookie|set-cookie|x-vault-token|x-openbao-token|vault_token|openbao_token|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|id_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret)|tenant_id|tenant_name|organization_id|organization_name|customer_id|customer_name|account_id|user_id|user_name|email|phone|message_id|order_id|workflow_id|execution_id|request\.body|response\.body|http\.request\.body|http\.response\.body|db\.statement)"\s*:\s*)(?:-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false|null)(\s*[,}])`
 		replace    = "$1\"[REDACTED]\"$2"
 	}
 
 	stage.drop {
-		expression          = `(?i)"(?:authorization|proxy_authorization|cookie|set-cookie|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret)|tenant_id|tenant_name|organization_id|organization_name|customer_id|customer_name|account_id|user_id|user_name|email|phone|message_id|order_id|workflow_id|execution_id|request\.body|response\.body|http\.request\.body|http\.response\.body|db\.statement)"\s*:\s*[\[{]`
+		expression          = `(?i)"(?:authorization|proxy_authorization|cookie|set-cookie|x-vault-token|x-openbao-token|vault_token|openbao_token|password|passwd|api[_-]?key|client_secret|access_token|refresh_token|session_token|id_token|private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|exchange(?:_|\.)(?:api_key|secret)|tenant_id|tenant_name|organization_id|organization_name|customer_id|customer_name|account_id|user_id|user_name|email|phone|message_id|order_id|workflow_id|execution_id|request\.body|response\.body|http\.request\.body|http\.response\.body|db\.statement)"\s*:\s*[\[{]`
 		drop_counter_reason = "complex_sensitive_json_value"
 	}
 

@@ -42,8 +42,9 @@ EXTERNAL_AUTHORITIES = {
 }
 
 SENSITIVE_KEYS = (
-    r"authorization|proxy_authorization|cookie|set-cookie|password|passwd|"
-    r"api[_-]?key|client_secret|access_token|refresh_token|session_token|"
+    r"authorization|proxy_authorization|cookie|set-cookie|x-vault-token|x-openbao-token|"
+    r"vault_token|openbao_token|password|passwd|"
+    r"api[_-]?key|client_secret|access_token|refresh_token|session_token|id_token|"
     r"private_key|database_url|dsn|broker(?:_|\.)(?:credential|signing_key)|"
     r"exchange(?:_|\.)(?:api_key|secret)|tenant_id|tenant_name|organization_id|"
     r"organization_name|customer_id|customer_name|account_id|user_id|user_name|"

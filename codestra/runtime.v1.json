@@ -41,7 +41,10 @@
     "hostMetrics": false,
     "containerMetrics": false,
     "applicationOtlpGateway": false,
-    "selfMetrics": true
+    "selfMetrics": true,
+    "openbaoAuditRoot": "/var/log/openbao/openbao-audit*.jsonl",
+    "openbaoAuditMountedOnlyOnOpenBaoHost": true,
+    "openbaoAuditHmacPreserved": true
   },
   "authorityBoundaries": {
     "nodeExporterOwnsHostMetrics": true,
@@ -116,7 +119,13 @@
     "customerAndPersonValuesReplaced": true,
     "rawBodyAndDatabaseStatementValuesReplaced": true,
     "emailAddressesReplaced": true,
-    "applicationDataMinimizationStillRequired": true
+    "applicationDataMinimizationStillRequired": true,
+    "openbaoTokens": true,
+    "jwtShapedValues": true,
+    "openbaoHeaderNames": [
+      "x-vault-token",
+      "x-openbao-token"
+    ]
   },
   "delivery": {
     "lokiTenantIdSource": "CODESTRA_BUSINESS",
@@ -159,5 +168,20 @@
     "prometheusSelfScrapePassed": false,
     "productionApproved": false,
     "deploymentEnabled": false
-  }
+  },
+  "structuredMetadata": {
+    "serviceLogs": [
+      "correlation_id",
+      "trace_id",
+      "span_id"
+    ],
+    "openbaoAudit": [
+      "audit_type",
+      "audit_operation",
+      "audit_error"
+    ],
+    "neverStreamLabels": true,
+    "purpose": "log <-> trace <-> incident drilldown with bounded index cardinality"
+  },
+  "secretReferences": "codestra/secret-references.v1.json"
 }

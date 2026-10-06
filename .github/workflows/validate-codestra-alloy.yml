@@ -8,6 +8,7 @@ on:
       - 'scripts/validate_codestra_alloy_corporate.py'
       - 'scripts/validate_codestra_alloy_staging_review.py'
       - 'scripts/validate_codestra_intake_monitoring.py'
+      - 'scripts/prepare_ci_disk.sh'
       - '.github/workflows/validate-codestra-alloy.yml'
       - '.github/workflows/upstream-source-sync.yml'
       - 'CODESTRA_UPSTREAM.json'
@@ -21,6 +22,7 @@ on:
       - 'scripts/validate_codestra_alloy_corporate.py'
       - 'scripts/validate_codestra_alloy_staging_review.py'
       - 'scripts/validate_codestra_intake_monitoring.py'
+      - 'scripts/prepare_ci_disk.sh'
       - '.github/workflows/validate-codestra-alloy.yml'
       - '.github/workflows/upstream-source-sync.yml'
       - 'CODESTRA_UPSTREAM.json'
@@ -43,6 +45,9 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           fetch-depth: 1
+
+      - name: Reserve disk for the source build
+        run: bash scripts/prepare_ci_disk.sh
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
@@ -159,11 +164,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends binutils gcc libsystemd-dev pkg-config
 
-      - name: Format, vet, and compile native health probe
+      - name: Format, vet, test, and compile native helpers
         run: |
-          gofmt -w codestra/deploy/healthcheck.go
-          git diff --exit-code -- codestra/deploy/healthcheck.go
+          gofmt -w codestra/deploy/healthcheck.go codestra/deploy/alloy_entrypoint.go codestra/deploy/alloy_entrypoint_test.go
+          git diff --exit-code -- codestra/deploy/healthcheck.go codestra/deploy/alloy_entrypoint.go codestra/deploy/alloy_entrypoint_test.go
           go vet codestra/deploy/healthcheck.go
+          go vet codestra/deploy/alloy_entrypoint.go codestra/deploy/alloy_entrypoint_test.go
+          CGO_ENABLED=1 go test -race codestra/deploy/alloy_entrypoint.go codestra/deploy/alloy_entrypoint_test.go
           CGO_ENABLED=0 go build -buildvcs=false -trimpath -o /tmp/alloy-healthcheck codestra/deploy/healthcheck.go
 
       - name: Build exact source-bound Alloy executable with journal support
@@ -171,7 +178,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p ../../.bin
-          CGO_ENABLED=1 go build \
+          CGO_ENABLED=1 go build -p=2 \
             -buildvcs=false \
             -trimpath \
             -tags='promtail_journal_enabled' \
